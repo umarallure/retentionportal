@@ -3,28 +3,43 @@ import * as React from "react";
 import type { MondayComDeal } from "@/types";
 import { supabase } from "@/lib/supabase";
 
-export function useRealtimeMondayDeals() {
+export function useRealtimeMondayDeals(page: number, pageSize: number) {
   const [data, setData] = React.useState<MondayComDeal[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [hasMore, setHasMore] = React.useState(false);
 
-  const refresh = React.useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data: rows, error } = await supabase
-        .from("monday_com_deals")
-        .select("*")
-        .order("last_updated", { ascending: false, nullsFirst: false })
-        .limit(200);
+  const refresh = React.useCallback(
+    async (overridePage?: number, overridePageSize?: number) => {
+      const currentPage = overridePage ?? page;
+      const currentPageSize = overridePageSize ?? pageSize;
 
-      if (!error && rows) {
-        setData(rows as MondayComDeal[]);
+      const from = (currentPage - 1) * currentPageSize;
+      const to = from + currentPageSize - 1;
+
+      setLoading(true);
+      try {
+        const { data: rows, error, count } = await supabase
+          .from("monday_com_deals")
+          .select("*", { count: "exact" })
+          .order("last_updated", { ascending: false, nullsFirst: false })
+          .range(from, to);
+
+        if (!error && rows) {
+          setData(rows as MondayComDeal[]);
+          if (typeof count === "number") {
+            setHasMore(to + 1 < count);
+          } else {
+            setHasMore(rows.length === currentPageSize);
+          }
+        }
+      } finally {
+        setLoading(false);
       }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    },
+    [page, pageSize]
+  );
 
-  // Initial fetch
+  // Initial & page-dependent fetch
   React.useEffect(() => {
     let cancelled = false;
 
@@ -61,5 +76,5 @@ export function useRealtimeMondayDeals() {
     };
   }, [refresh]);
 
-  return { data, loading, refresh };
+  return { data, loading, refresh, hasMore };
 }

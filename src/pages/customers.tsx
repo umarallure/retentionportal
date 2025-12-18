@@ -6,7 +6,10 @@ import { RefreshCcw } from "lucide-react";
 
 export default function CustomersPage() {
   const [mounted, setMounted] = React.useState(false);
-  const { data, loading, refresh } = useRealtimeMondayDeals();
+  const [page, setPage] = React.useState(1);
+  const pageSize = 25;
+
+  const { data, loading, refresh, hasMore } = useRealtimeMondayDeals(page, pageSize);
 
   React.useEffect(() => {
     setMounted(true);
@@ -23,7 +26,7 @@ export default function CustomersPage() {
         <Button 
             variant="outline" 
             size="sm" 
-            onClick={refresh} 
+            onClick={() => refresh()} 
             disabled={loading}
             className="w-fit shadow-sm bg-card hover:bg-muted"
         >
@@ -32,8 +35,32 @@ export default function CustomersPage() {
         </Button>
       </div>
 
-      <div className="mx-auto">
+      <div className="mx-auto space-y-4">
         {mounted ? <CustomersTable data={data} loading={loading} /> : null}
+
+        <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+          <div>
+            Page <span className="font-medium">{page}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loading || page === 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={loading || !hasMore}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
