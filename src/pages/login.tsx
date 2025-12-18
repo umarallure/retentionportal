@@ -60,7 +60,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary/10 to-primary/5 px-4 dark:from-slate-900 dark:to-slate-800">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold">BPO Alert Portal</CardTitle>
+          <CardTitle className="text-2xl font-bold">Retention Portal</CardTitle>
           <CardDescription>Admin Dashboard</CardDescription>
         </CardHeader>
 
