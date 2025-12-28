@@ -10,8 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
-import { ChevronDownIcon, ChevronRightIcon, PhoneForwardedIcon, EyeIcon, ShieldIcon } from "lucide-react";
-import { ClaimCallModal } from "./claim-call-modal";
+import { ChevronDownIcon, ChevronRightIcon, EyeIcon } from "lucide-react";
 
 export type DealGroup = {
   id: string;
@@ -65,8 +64,6 @@ export function GroupedDealsGroup({
   const [rows, setRows] = React.useState<DealRow[]>([]);
   const [hasMore, setHasMore] = React.useState(false);
   const [count, setCount] = React.useState<number | null>(null);
-  const [claimModalOpen, setClaimModalOpen] = React.useState(false);
-  const [selectedLead, setSelectedLead] = React.useState<DealRow | null>(null);
 
   React.useEffect(() => {
     setPage(1);
@@ -204,18 +201,6 @@ export function GroupedDealsGroup({
                     <div className="flex flex-col items-end justify-center gap-2">
                       <Button
                         size="sm"
-                        className="gap-1"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedLead(deal);
-                          setClaimModalOpen(true);
-                        }}
-                      >
-                        <PhoneForwardedIcon className="size-4" />
-                        Claim Call
-                      </Button>
-                      <Button
-                        size="sm"
                         variant="outline"
                         className="gap-1"
                         onClick={(e) => {
@@ -225,18 +210,6 @@ export function GroupedDealsGroup({
                       >
                         <EyeIcon className="size-4" />
                         View
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="gap-1"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void router.push(`/retention-flow?id=${encodeURIComponent(String(deal.id))}`);
-                        }}
-                      >
-                        <ShieldIcon className="size-4" />
-                        Claim Retention
                       </Button>
                     </div>
                   </TableCell>
@@ -274,28 +247,6 @@ export function GroupedDealsGroup({
           </>
         )
       ) : null}
-      <ClaimCallModal
-        open={claimModalOpen}
-        onOpenChange={setClaimModalOpen}
-        leadName={selectedLead?.ghl_name ?? selectedLead?.deal_name ?? undefined}
-        leadId={
-          selectedLead?.policy_number ??
-          (selectedLead?.monday_item_id ? String(selectedLead.monday_item_id) : undefined) ??
-          (selectedLead?.id ? String(selectedLead.id) : undefined)
-        }
-        onClaim={(leadId) => {
-          const targetId =
-            leadId ??
-            (selectedLead?.policy_number ??
-              (selectedLead?.monday_item_id ? String(selectedLead.monday_item_id) : undefined) ??
-              (selectedLead?.id ? String(selectedLead.id) : undefined));
-          if (targetId) {
-            void router.push(`/agent/call-update?leadId=${encodeURIComponent(targetId)}`);
-          } else {
-            void router.push("/agent/call-update");
-          }
-        }}
-      />
     </>
   );
 }

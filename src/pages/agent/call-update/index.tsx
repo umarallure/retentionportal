@@ -11,37 +11,109 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 
-type VerificationItem = {
-  label: string;
-  value: string;
-  verified: boolean;
-};
-
-const verificationItems: VerificationItem[] = [
-  { label: "Lead Vendor", value: "Zupax Marketing", verified: true },
-  { label: "Customer Full Name", value: "John Smith", verified: true },
-  { label: "Date of Birth", value: "2025-12-11", verified: true },
-  { label: "Age", value: "Enter age", verified: false },
-  { label: "Birth State", value: "Enter birth state", verified: false },
-  { label: "Social Security", value: "Enter SSN", verified: false },
-  { label: "Driver License", value: "Enter DL", verified: false },
-  { label: "City", value: "San Francisco, CA", verified: false },
-  { label: "Phone", value: "(111) 111-1111", verified: true },
-  { label: "Email", value: "john@example.com", verified: false },
-];
+import { useToast } from "@/hooks/use-toast";
+import { useCallUpdate } from "@/lib/agent/call-update.logic";
 
 export default function CallUpdatePage() {
   const router = useRouter();
+  const { toast } = useToast();
+  const {
+    lead,
+    insuredName,
+    leadVendor,
+    phoneNumber,
+    carrier,
+    productType,
+    sessionCallCenter,
+    sessionPolicyNumber,
+    loadingLead,
+    leadError,
+    verificationItems,
+    verificationLoading,
+    verificationError,
+    verificationInputValues,
+    toggleVerificationItem,
+    updateVerificationItemValue,
+    verificationProgress,
+    dealFlowRow,
+    dealFlowLoading,
+    dealFlowError,
+    saveDealFlow,
+    hasDealFlowColumn,
+    sanitizeDealFlowPatch,
+    agentOptions,
+    agentOptionsLoading,
+    agentOptionsError,
+    centerOptions,
+    centerOptionsLoading,
+    centerOptionsError,
+    carrierOptions,
+    carrierOptionsLoading,
+    carrierOptionsError,
+    policyNumber,
+    retentionAgent,
+    retentionType,
+    titleizeKey,
+  } = useCallUpdate();
+
+  const [saving, setSaving] = React.useState(false);
+
   const [applicationSubmitted, setApplicationSubmitted] = React.useState<"yes" | "no">("yes");
-  const [callSource, setCallSource] = React.useState("BPO Transfer");
-  const [bufferAgent, setBufferAgent] = React.useState("Justine");
-  const [licensedAgent, setLicensedAgent] = React.useState("Claudia");
+  const [callSource, setCallSource] = React.useState("");
+  const [bufferAgent, setBufferAgent] = React.useState("");
+  const [licensedAgent, setLicensedAgent] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [statusStage, setStatusStage] = React.useState("");
+  const [submissionDate, setSubmissionDate] = React.useState("");
+  const [draftDate, setDraftDate] = React.useState("");
+  const [monthlyPremium, setMonthlyPremium] = React.useState("");
+  const [coverageAmount, setCoverageAmount] = React.useState("");
+  const [sentToUnderwriting, setSentToUnderwriting] = React.useState<"yes" | "no" | "">("");
+  const [selectedCenter, setSelectedCenter] = React.useState("");
+  const [selectedCarrier, setSelectedCarrier] = React.useState("");
 
-  const verifiedCount = verificationItems.filter((i) => i.verified).length;
-  const totalCount = 31;
-  const progress = Math.round((verifiedCount / totalCount) * 100);
+  React.useEffect(() => {
+    if (!dealFlowRow) return;
+    setBufferAgent(dealFlowRow.buffer_agent ?? "");
+    setLicensedAgent(dealFlowRow.licensed_agent_account ?? "");
+    setStatusStage(dealFlowRow.status ?? "");
+    setNotes(dealFlowRow.notes ?? "");
+    setCallSource(dealFlowRow.call_result ?? "");
+    setSubmissionDate(dealFlowRow.date ?? "");
+    setDraftDate(dealFlowRow.draft_date ?? "");
+    setMonthlyPremium(dealFlowRow.monthly_premium != null ? String(dealFlowRow.monthly_premium) : "");
+    setCoverageAmount(dealFlowRow.face_amount != null ? String(dealFlowRow.face_amount) : "");
+    setSelectedCenter(dealFlowRow.lead_vendor ?? leadVendor ?? "");
+    setSelectedCarrier(dealFlowRow.carrier ?? carrier ?? "");
+
+    const hasNoFlowInputs =
+      !(dealFlowRow.status ?? "").trim().length &&
+      !(dealFlowRow.notes ?? "").trim().length;
+    setApplicationSubmitted(hasNoFlowInputs ? "yes" : "no");
+
+    const underwritingColumnCandidates = [
+      "sent_to_underwriting",
+      "send_to_underwriting",
+      "sent_to_uw",
+      "sent_to_underwriting_flag",
+    ];
+    const found = underwritingColumnCandidates.find((c) => hasDealFlowColumn(c)) ?? null;
+    if (found) {
+      const raw = (dealFlowRow as unknown as Record<string, unknown>)[found];
+      if (typeof raw === "boolean") setSentToUnderwriting(raw ? "yes" : "no");
+      else if (typeof raw === "string") {
+        const t = raw.trim().toLowerCase();
+        if (t === "yes" || t === "true" || t === "1") setSentToUnderwriting("yes");
+        else if (t === "no" || t === "false" || t === "0") setSentToUnderwriting("no");
+        else setSentToUnderwriting("");
+      } else if (typeof raw === "number") setSentToUnderwriting(raw ? "yes" : "no");
+      else setSentToUnderwriting("");
+    } else {
+      setSentToUnderwriting("");
+    }
+  }, [dealFlowRow, hasDealFlowColumn, leadVendor, carrier]);
+
+  const progress = verificationProgress.percent;
 
   return (
     <div className="w-full px-4 md:px-8 lg:px-10 py-6 min-h-screen bg-muted/15">
@@ -80,40 +152,84 @@ export default function CallUpdatePage() {
               </Badge>
             </div>
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              <span>Agent: Unknown</span>
+              <span>Agent: {retentionAgent || "—"}</span>
               <Separator orientation="vertical" className="h-4" />
-              <span>Time: 18:46:29</span>
+              <span>Policy: {sessionPolicyNumber || policyNumber || "—"}</span>
+            </div>
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <span>Call Center: {sessionCallCenter || leadVendor || "—"}</span>
             </div>
             <div className="flex items-center gap-3 text-sm">
-              <span className="text-muted-foreground">{verifiedCount} of {totalCount} fields verified</span>
+              <span className="text-muted-foreground">
+                {verificationProgress.verified} of {verificationProgress.total} fields verified
+              </span>
               <span className="text-primary font-semibold">{progress}%</span>
               <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-200">Just Started</Badge>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid gap-2">
-              {verificationItems.map((item) => (
-                <div
-                  key={item.label}
-                  className="flex items-center justify-between rounded-lg border bg-card px-3 py-2 shadow-[0_1px_0_rgba(0,0,0,0.02)]"
-                >
-                  <div className="flex items-center gap-3">
-                    <Checkbox checked={item.verified} />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{item.label}</p>
-                      <p className="text-xs text-muted-foreground">{item.value}</p>
+            {loadingLead ? (
+              <div className="text-sm text-muted-foreground">Loading lead...</div>
+            ) : leadError ? (
+              <div className="text-sm text-red-600">{leadError}</div>
+            ) : !lead ? (
+              <div className="text-sm text-muted-foreground">Lead not found.</div>
+            ) : verificationLoading ? (
+              <div className="text-sm text-muted-foreground">Loading verification...</div>
+            ) : verificationError ? (
+              <div className="text-sm text-red-600">{verificationError}</div>
+            ) : verificationItems.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No verification fields yet.</div>
+            ) : (
+              <div className="space-y-2">
+                {verificationItems.map((item) => {
+                  const itemId = typeof item.id === "string" ? item.id : null;
+                  if (!itemId) return null;
+                  const fieldName = typeof item.field_name === "string" ? item.field_name : "";
+                  const checked = !!item.is_verified;
+                  const value = verificationInputValues[itemId] ?? "";
+
+                  return (
+                    <div
+                      key={itemId}
+                      className="rounded-lg border bg-card px-3 py-2 shadow-[0_1px_0_rgba(0,0,0,0.02)] space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(v) => {
+                              void toggleVerificationItem(itemId, Boolean(v));
+                            }}
+                          />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate" title={fieldName}>
+                              {titleizeKey(fieldName || "Field")}
+                            </p>
+                          </div>
+                        </div>
+
+                        {checked ? (
+                          <Badge variant="outline" className="border-green-500/30 text-green-700 bg-green-500/10">
+                            Verified
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary">Pending</Badge>
+                        )}
+                      </div>
+
+                      <Input
+                        value={value}
+                        onChange={(e) => {
+                          void updateVerificationItemValue(itemId, e.target.value);
+                        }}
+                        className="text-xs"
+                      />
                     </div>
-                  </div>
-                  {item.verified ? (
-                    <Badge variant="outline" className="border-green-500/30 text-green-700 bg-green-500/10">
-                      Verified
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary">Pending</Badge>
-                  )}
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               <Button size="sm" variant="secondary" className="bg-red-100 text-red-700 border-red-200">
                 Call Dropped
@@ -136,9 +252,21 @@ export default function CallUpdatePage() {
           <Card className="shadow-md border border-muted/60">
             <CardHeader>
               <CardTitle>Update Call Result</CardTitle>
-              <CardDescription>Was the application submitted?</CardDescription>
+              <CardDescription>
+                {insuredName}
+                {policyNumber ? ` • ${policyNumber}` : ""}
+                {selectedCenter ? ` • ${selectedCenter}` : leadVendor ? ` • ${leadVendor}` : ""}
+                {phoneNumber ? ` • ${phoneNumber}` : ""}
+                {retentionType ? ` • ${retentionType}` : ""}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
+              {dealFlowLoading ? (
+                <div className="text-sm text-muted-foreground">Loading call update...</div>
+              ) : dealFlowError ? (
+                <div className="text-sm text-red-600">{dealFlowError}</div>
+              ) : null}
+
               <div className="flex items-center gap-3">
                 <Button
                   variant={applicationSubmitted === "yes" ? "default" : "outline"}
@@ -179,12 +307,24 @@ export default function CallUpdatePage() {
                     <Label>Buffer Agent</Label>
                     <Select value={bufferAgent} onValueChange={setBufferAgent}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Select buffer agent" />
+                        <SelectValue placeholder={agentOptionsLoading ? "Loading agents..." : "Select buffer agent"} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Justine">Justine</SelectItem>
-                        <SelectItem value="Alex">Alex</SelectItem>
-                        <SelectItem value="Kim">Kim</SelectItem>
+                        {agentOptionsError ? (
+                          <SelectItem value="__disabled_agents_error__" disabled>
+                            Failed to load agents
+                          </SelectItem>
+                        ) : agentOptions.length ? (
+                          agentOptions.map((a) => (
+                            <SelectItem key={a.id} value={a.display_name}>
+                              {a.display_name}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value="__disabled_agents_empty__" disabled>
+                            No agents found
+                          </SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -192,12 +332,24 @@ export default function CallUpdatePage() {
                     <Label>Agent who took the call</Label>
                     <Select value={licensedAgent} onValueChange={setLicensedAgent}>
                       <SelectTrigger>
-                        <SelectValue placeholder="Select agent" />
+                        <SelectValue placeholder={agentOptionsLoading ? "Loading agents..." : "Select agent"} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Claudia">Claudia</SelectItem>
-                        <SelectItem value="Jordan">Jordan</SelectItem>
-                        <SelectItem value="Taylor">Taylor</SelectItem>
+                        {agentOptionsError ? (
+                          <SelectItem value="__disabled_agents_error__" disabled>
+                            Failed to load agents
+                          </SelectItem>
+                        ) : agentOptions.length ? (
+                          agentOptions.map((a) => (
+                            <SelectItem key={a.id} value={a.display_name}>
+                              {a.display_name}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value="__disabled_agents_empty__" disabled>
+                            No agents found
+                          </SelectItem>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -248,32 +400,154 @@ export default function CallUpdatePage() {
                   <CardContent className="space-y-6">
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-2">
+                        <Label>Licensed Agent Account</Label>
+                        <Select value={licensedAgent} onValueChange={setLicensedAgent}>
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={agentOptionsLoading ? "Loading agents..." : "Select licensed account"}
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {agentOptionsError ? (
+                              <SelectItem value="__disabled_agents_error__" disabled>
+                                Failed to load agents
+                              </SelectItem>
+                            ) : agentOptions.length ? (
+                              agentOptions.map((a) => (
+                                <SelectItem key={a.id} value={a.display_name}>
+                                  {a.display_name}
+                                </SelectItem>
+                              ))
+                            ) : (
+                              <SelectItem value="__disabled_agents_empty__" disabled>
+                                No agents found
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Carrier Name</Label>
+                        <Select value={selectedCarrier} onValueChange={setSelectedCarrier}>
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={carrierOptionsLoading ? "Loading carriers..." : "Select carrier"}
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {selectedCarrier.trim().length &&
+                            !carrierOptions.some(
+                              (c) => (c.carrier_name ?? "").toString().trim() === selectedCarrier.trim(),
+                            ) ? (
+                              <SelectItem value={selectedCarrier.trim()}>{selectedCarrier.trim()}</SelectItem>
+                            ) : null}
+                            {carrierOptionsError ? (
+                              <SelectItem value="__disabled_carriers_error__" disabled>
+                                Failed to load carriers
+                              </SelectItem>
+                            ) : carrierOptions.length ? (
+                              carrierOptions
+                                .filter((c) => (c.carrier_name ?? "").toString().trim().length)
+                                .map((c) => (
+                                  <SelectItem key={c.id} value={(c.carrier_name ?? "").toString().trim()}>
+                                    {(c.carrier_name ?? "").toString()}
+                                  </SelectItem>
+                                ))
+                            ) : (
+                              <SelectItem value="__disabled_carriers_empty__" disabled>
+                                No carriers found
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Product Type</Label>
+                        <Input placeholder="Select product type" value={productType} readOnly />
+                      </div>
+                      <div className="space-y-2">
                         <Label>Lead Vendor</Label>
-                        <Input placeholder="Zupax Marketing" defaultValue="Zupax Marketing" />
+                        <Select value={selectedCenter} onValueChange={setSelectedCenter}>
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={centerOptionsLoading ? "Loading centers..." : "Select lead vendor"}
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {selectedCenter.trim().length &&
+                            !centerOptions.some(
+                              (c) => (c.lead_vendor ?? "").toString().trim() === selectedCenter.trim(),
+                            ) ? (
+                              <SelectItem value={selectedCenter.trim()}>{selectedCenter.trim()}</SelectItem>
+                            ) : null}
+                            {centerOptionsError ? (
+                              <SelectItem value="__disabled_centers_error__" disabled>
+                                Failed to load centers
+                              </SelectItem>
+                            ) : centerOptions.length ? (
+                              centerOptions
+                                .filter((c) => (c.lead_vendor ?? "").trim().length)
+                                .map((c) => (
+                                  <SelectItem key={c.id} value={(c.lead_vendor ?? "").trim()}>
+                                    {(c.center_name ?? c.lead_vendor ?? "").toString()}
+                                  </SelectItem>
+                                ))
+                            ) : (
+                              <SelectItem value="__disabled_centers_empty__" disabled>
+                                No centers found
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label>Carrier</Label>
-                        <Input placeholder="Carrier name" />
+                        <Label>Draft Date</Label>
+                        <Input type="date" value={draftDate} onChange={(e) => setDraftDate(e.target.value)} />
                       </div>
                       <div className="space-y-2">
-                        <Label>Product</Label>
-                        <Input placeholder="Product type" />
+                        <Label>Monthly Premium</Label>
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          placeholder="0.00"
+                          value={monthlyPremium}
+                          onChange={(e) => setMonthlyPremium(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Coverage Amount</Label>
+                        <Input
+                          type="number"
+                          inputMode="decimal"
+                          placeholder="0.00"
+                          value={coverageAmount}
+                          onChange={(e) => setCoverageAmount(e.target.value)}
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>Submission Date</Label>
-                        <Input type="date" defaultValue="2025-12-11" />
+                        <Input type="date" value={submissionDate} onChange={(e) => setSubmissionDate(e.target.value)} />
                       </div>
-                      <div className="space-y-2">
-                        <Label>Underwriting</Label>
-                        <Select defaultValue="no">
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="yes">Yes</SelectItem>
-                            <SelectItem value="no">No</SelectItem>
-                          </SelectContent>
-                        </Select>
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label>Sent to Underwriting?</Label>
+                        <div className="flex items-center gap-3">
+                          <Button
+                            type="button"
+                            variant={sentToUnderwriting === "yes" ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setSentToUnderwriting("yes")}
+                          >
+                            Yes
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={sentToUnderwriting === "no" ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setSentToUnderwriting("no")}
+                          >
+                            No
+                          </Button>
+                        </div>
                       </div>
                       <div className="space-y-2 sm:col-span-2">
                         <Label>Agent Notes</Label>
@@ -288,92 +562,110 @@ export default function CallUpdatePage() {
                         </p>
                       </div>
                     </div>
-
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>Accident Date</Label>
-                        <Input type="date" defaultValue="2025-12-11" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Accident Location</Label>
-                        <Input defaultValue="111 Pine Street, San Francisco, CA" />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label>Scenario</Label>
-                        <Textarea
-                          placeholder="Describe the accident scenario..."
-                          defaultValue="Lorem ipsum dolor sit amet..."
-                          className="min-h-[120px]"
-                        />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label>Injuries</Label>
-                        <Textarea placeholder="Injury details" defaultValue="Lorem ipsum dolor sit amet..." />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <Label>Medical Attention</Label>
-                        <Textarea placeholder="Medical attention details" defaultValue="Lorem ipsum dolor sit amet..." />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2 grid sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>Police Attended</Label>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm">Yes</Button>
-                            <Button variant="outline" size="sm">No</Button>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Was Insured</Label>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm">Yes</Button>
-                            <Button variant="outline" size="sm">No</Button>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="space-y-2 sm:col-span-2 grid sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>Vehicle Registration</Label>
-                          <Input placeholder="Enter registration" />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Insurance Company</Label>
-                          <Input placeholder="Insurance company" />
-                        </div>
-                      </div>
-                      <div className="space-y-2 sm:col-span-2 grid sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>Third Party Vehicle Registration</Label>
-                          <Input placeholder="Enter registration" />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Other Party Admitted Fault</Label>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm">Yes</Button>
-                            <Button variant="outline" size="sm">No</Button>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="space-y-2 sm:col-span-2 grid sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>Number of Passengers</Label>
-                          <Input type="number" min={0} defaultValue={1} />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Prior Attorney Involved</Label>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm">Yes</Button>
-                            <Button variant="outline" size="sm">No</Button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
                   </CardContent>
                 </Card>
               ) : null}
 
               <div className="flex items-center justify-end gap-3">
                 <Button variant="outline">Cancel</Button>
-                <Button>Save Call Result</Button>
+                <Button
+                  disabled={
+                    saving ||
+                    dealFlowLoading ||
+                    !dealFlowRow ||
+                    !callSource.trim().length ||
+                    (applicationSubmitted === "no" && (!statusStage.trim().length || !notes.trim().length))
+                  }
+                  onClick={() => {
+                    const run = async () => {
+                      if (!dealFlowRow) return;
+
+                      const underwritingColumnCandidates = [
+                        "sent_to_underwriting",
+                        "send_to_underwriting",
+                        "sent_to_uw",
+                        "sent_to_underwriting_flag",
+                      ];
+                      const underwritingColumnName =
+                        underwritingColumnCandidates.find((c) => hasDealFlowColumn(c)) ?? null;
+
+                      const monthlyPremiumNumber = monthlyPremium.trim().length
+                        ? Number(monthlyPremium)
+                        : null;
+                      const coverageAmountNumber = coverageAmount.trim().length
+                        ? Number(coverageAmount)
+                        : null;
+
+                      setSaving(true);
+                      try {
+                        const basePatch: Record<string, unknown> = {
+                          insured_name: insuredName,
+                          lead_vendor: selectedCenter || leadVendor || null,
+                          client_phone_number: phoneNumber || null,
+                          buffer_agent: bufferAgent || null,
+                          licensed_agent_account: licensedAgent || null,
+                          agent: licensedAgent || null,
+                          call_result: callSource || null,
+                          policy_number: policyNumber ?? null,
+                          retention_agent: retentionAgent || null,
+                        };
+
+                        if (applicationSubmitted === "no") {
+                          basePatch["status"] = statusStage || null;
+                          basePatch["notes"] = notes || null;
+                        } else {
+                          basePatch["status"] = null;
+                          basePatch["notes"] = notes || null;
+                          basePatch["date"] = submissionDate || null;
+                          basePatch["draft_date"] = draftDate || null;
+                          basePatch["monthly_premium"] =
+                            typeof monthlyPremiumNumber === "number" && Number.isFinite(monthlyPremiumNumber)
+                              ? monthlyPremiumNumber
+                              : null;
+                          basePatch["face_amount"] =
+                            typeof coverageAmountNumber === "number" && Number.isFinite(coverageAmountNumber)
+                              ? coverageAmountNumber
+                              : null;
+                          basePatch["carrier"] = selectedCarrier || carrier || null;
+                          basePatch["product_type"] = productType || null;
+
+                          if (underwritingColumnName) {
+                            basePatch[underwritingColumnName] =
+                              sentToUnderwriting === "" ? null : sentToUnderwriting === "yes";
+                          }
+                        }
+
+                        const merged = {
+                          ...(dealFlowRow as unknown as Record<string, unknown>),
+                          ...basePatch,
+                        };
+                        const fullPayload = sanitizeDealFlowPatch(merged);
+
+                        await saveDealFlow({
+                          ...(fullPayload as Partial<NonNullable<typeof dealFlowRow>>),
+                        });
+
+                        toast({
+                          title: "Saved",
+                          description: "Call update record saved successfully.",
+                          variant: "success",
+                        });
+                      } catch (e) {
+                        const msg = e instanceof Error ? e.message : "Failed to save call update record.";
+                        toast({
+                          title: "Save failed",
+                          description: msg,
+                          variant: "destructive",
+                        });
+                      } finally {
+                        setSaving(false);
+                      }
+                    };
+                    void run();
+                  }}
+                >
+                  Save Call Result
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -392,7 +684,12 @@ export default function CallUpdatePage() {
             </div>
             <div className="space-y-2">
               <Label>Lead Details</Label>
-              <Textarea placeholder="Load details..." className="min-h-[96px]" />
+              <Textarea
+                placeholder="Load details..."
+                className="min-h-[96px]"
+                value={insuredName}
+                readOnly
+              />
             </div>
           </div>
         </CardContent>

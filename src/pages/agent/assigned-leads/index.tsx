@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
-import { Loader2, PhoneForwardedIcon, EyeIcon, ShieldIcon } from "lucide-react";
+import { Loader2, EyeIcon } from "lucide-react";
 
 type AssignedLeadRow = {
   id: string;
@@ -81,10 +81,20 @@ export default function AssignedLeadsPage() {
       }
 
       const leadIds = assignments.map((a) => a.lead_id);
+      console.info("[agent-assigned-leads] fetching leads from leads table", {
+        leadIdsCount: leadIds.length,
+        leadIdsPreview: leadIds.slice(0, 10),
+      });
       const { data: leadRows, error: leadsError } = await supabase
         .from("leads")
         .select("id, customer_full_name, carrier, product_type, phone_number, lead_vendor, created_at")
         .in("id", leadIds);
+
+      console.info("[agent-assigned-leads] leads table fetch completed", {
+        ok: !leadsError,
+        rows: (leadRows ?? []).length,
+        error: leadsError ?? null,
+      });
 
       if (leadsError) {
         console.error("[agent-assigned-leads] leads error", leadsError);
@@ -185,7 +195,6 @@ export default function AssignedLeadsPage() {
                   const leadIdForRoutes = row.lead_id;
 
                   const viewHref = `/agent/assigned-lead-details?id=${encodeURIComponent(String(leadIdForRoutes))}`;
-                  const retentionHref = `/retention-flow?id=${encodeURIComponent(String(leadIdForRoutes))}`;
 
                   return (
                     <div
@@ -215,18 +224,6 @@ export default function AssignedLeadsPage() {
                       <div className="flex flex-col items-end justify-center gap-2">
                         <Button
                           size="sm"
-                          className="gap-1"
-                          onClick={() => {
-                            void router.push(
-                              `/agent/call-update?leadId=${encodeURIComponent(leadIdForRoutes)}`,
-                            );
-                          }}
-                        >
-                          <PhoneForwardedIcon className="size-4" />
-                          Claim Call
-                        </Button>
-                        <Button
-                          size="sm"
                           variant="outline"
                           className="gap-1"
                           onClick={() => {
@@ -235,17 +232,6 @@ export default function AssignedLeadsPage() {
                         >
                           <EyeIcon className="size-4" />
                           View
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="gap-1"
-                          onClick={() => {
-                            void router.push(retentionHref);
-                          }}
-                        >
-                          <ShieldIcon className="size-4" />
-                          Claim Retention
                         </Button>
                       </div>
                     </div>

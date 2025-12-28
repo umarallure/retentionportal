@@ -1,394 +1,107 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import { useRouter } from "next/router";
-
-import { supabase } from "@/lib/supabase";
-import {
-  findDuplicateLeadsFromMondayGhlNames,
-  type DuplicateLeadFinderResult,
-} from "@/lib/duplicate-leads";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import type { MondayComDeal } from "@/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-type LeadRecord = Record<string, unknown>;
-
-function getString(row: LeadRecord | null, key: string): string | null {
-  if (!row) return null;
-  const v = row[key];
-  if (typeof v === "string") {
-    const t = v.trim();
-    return t.length ? t : null;
-  }
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  return null;
-}
-
-function titleizeKey(key: string) {
-  return key
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "string") {
-    const t = value.trim();
-    return t.length ? t : "—";
-  }
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return "—";
-}
-
-function pickRowValue(row: Record<string, unknown>, keys: string[]): unknown {
-  for (const k of keys) {
-    const v = row[k];
-    if (v !== undefined && v !== null && !(typeof v === "string" && v.trim().length === 0)) return v;
-  }
-  return null;
-}
-
-function formatCurrency(value: unknown): string {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "number") {
-    return value.toLocaleString(undefined, { style: "currency", currency: "USD" });
-  }
-  if (typeof value === "string") {
-    const t = value.trim();
-    if (!t.length) return "—";
-    const numeric = Number(t.replace(/[^0-9.-]/g, ""));
-    if (Number.isFinite(numeric)) {
-      return numeric.toLocaleString(undefined, { style: "currency", currency: "USD" });
-    }
-    return t;
-  }
-  return "—";
-}
+import {
+  formatCurrency,
+  formatValue,
+  pickRowValue,
+  titleizeKey,
+  useAssignedLeadDetails,
+} from "@/lib/agent/assigned-lead-details.logic";
 
 export default function AssignedLeadDetailsPage() {
-  const router = useRouter();
-  const idParam = router.query.id;
-
-  const [lead, setLead] = useState<LeadRecord | null>(null);
-  const [mondayDeals, setMondayDeals] = useState<MondayComDeal[]>([]);
-  const [mondayLoading, setMondayLoading] = useState(false);
-  const [mondayError, setMondayError] = useState<string | null>(null);
-  const [duplicateResult, setDuplicateResult] = useState<DuplicateLeadFinderResult | null>(null);
-  const [duplicateLoading, setDuplicateLoading] = useState(false);
-  const [duplicateError, setDuplicateError] = useState<string | null>(null);
-  const [dailyFlowRows, setDailyFlowRows] = useState<Array<Record<string, unknown>>>([]);
-  const [dailyFlowLoading, setDailyFlowLoading] = useState(false);
-  const [dailyFlowError, setDailyFlowError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!router.isReady) return;
-
-    const id = typeof idParam === "string" ? idParam : Array.isArray(idParam) ? idParam[0] : undefined;
-    if (!id) {
-      setError("Missing lead id in URL.");
-      setLead(null);
-      setLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const { data, error: leadsError } = await supabase
-          .from("leads")
-          .select("*")
-          .eq("id", id)
-          .maybeSingle();
-
-        if (leadsError) throw leadsError;
-
-        if (!cancelled) {
-          setLead((data ?? null) as LeadRecord | null);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : "Failed to load lead.";
-          setError(msg);
-          setLead(null);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [router.isReady, idParam]);
-
-  useEffect(() => {
-    if (!lead) {
-      setMondayDeals([]);
-      setMondayError(null);
-      setMondayLoading(false);
-      setDuplicateResult(null);
-      setDuplicateError(null);
-      setDuplicateLoading(false);
-      return;
-    }
-
-    const ghlName = getString(lead, "customer_full_name");
-    if (!ghlName) {
-      setMondayDeals([]);
-      setMondayError(null);
-      setMondayLoading(false);
-      setDuplicateResult(null);
-      setDuplicateError(null);
-      setDuplicateLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const run = async () => {
-      setMondayLoading(true);
-      setMondayError(null);
-      setDuplicateLoading(true);
-      setDuplicateError(null);
-      try {
-        // 1) Start from Monday: find deals that match this lead's name (fuzzy)
-        const escaped = ghlName.replace(/,/g, "");
-        const { data: mondayRows, error: mondayErr } = await supabase
-          .from("monday_com_deals")
-          .select("*")
-          .or(`ghl_name.ilike.%${escaped}%,deal_name.ilike.%${escaped}%`)
-          .order("last_updated", { ascending: false, nullsFirst: false });
-
-        if (mondayErr) throw mondayErr;
-
-        const deals = (mondayRows ?? []) as MondayComDeal[];
-        const ghlNames = Array.from(
-          new Set(
-            deals
-              .map((d) => (typeof d.ghl_name === "string" ? d.ghl_name : null))
-              .filter((v): v is string => !!v && v.trim().length > 0)
-          )
-        );
-
-        const res = await findDuplicateLeadsFromMondayGhlNames({
-          supabase,
-          ghlNames: ghlNames.length ? ghlNames : [ghlName],
-          excludeLeadId: typeof lead["id"] === "string" ? (lead["id"] as string) : undefined,
-          includeMondayDeals: true,
-        });
-
-        if (!cancelled) {
-          setMondayDeals(deals);
-          setDuplicateResult(res);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          const msg = e instanceof Error ? e.message : "Failed to load duplicate policies.";
-          setMondayError(msg);
-          setDuplicateError(msg);
-          setMondayDeals([]);
-          setDuplicateResult(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setMondayLoading(false);
-          setDuplicateLoading(false);
-        }
-      }
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [lead]);
-
-  const name = getString(lead, "customer_full_name") ?? "Unknown";
-  const phone = getString(lead, "phone_number") ?? "-";
-  const email = getString(lead, "email") ?? "-";
-  const policyNumber = getString(lead, "policy_number") ?? "-";
-  const carrier = getString(lead, "carrier") ?? "-";
-  const productType = getString(lead, "product_type") ?? "-";
-  const center = getString(lead, "lead_vendor") ?? "-";
-  const address1 = getString(lead, "street_address") ?? "-";
-  const city = getString(lead, "city") ?? "-";
-  const state = getString(lead, "state") ?? "-";
-  const zip = getString(lead, "zip_code") ?? "-";
-  const dob = getString(lead, "date_of_birth") ?? "-";
-  const ssnLast4 = getString(lead, "social_security") ?? "-";
-  const monthlyPremium = getString(lead, "monthly_premium") ?? "-";
-  const agent = getString(lead, "agent") ?? "-";
-
-  const additionalEntries = useMemo(() => {
-    if (!lead) return [] as Array<[string, unknown]>;
-
-    const exclude = new Set([
-      "id",
-      "created_at",
-      "updated_at",
-      "customer_full_name",
-      "phone_number",
-      "email",
-      "policy_number",
-      "carrier",
-      "product_type",
-      "lead_vendor",
-      "street_address",
-      "city",
-      "state",
-      "zip_code",
-      "date_of_birth",
-      "social_security",
-      "monthly_premium",
-      "agent",
-    ]);
-
-    return Object.entries(lead).filter(([key, value]) => !exclude.has(key) && value != null);
-  }, [lead]);
-
-  useEffect(() => {
-    if (!lead) {
-      setDailyFlowRows([]);
-      setDailyFlowError(null);
-      setDailyFlowLoading(false);
-      return;
-    }
-
-    const p = getString(lead, "phone_number");
-    if (!p) {
-      setDailyFlowRows([]);
-      setDailyFlowError(null);
-      setDailyFlowLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const load = async () => {
-      setDailyFlowLoading(true);
-      setDailyFlowError(null);
-      try {
-        const { data, error: dfError } = await supabase
-          .from("daily_deal_flow")
-          .select("*")
-          .eq("client_phone_number", p)
-          .order("date", { ascending: false })
-          .limit(100);
-
-        if (dfError) throw dfError;
-        if (!cancelled) setDailyFlowRows((data ?? []) as Array<Record<string, unknown>>);
-      } catch (e) {
-        if (!cancelled) {
-          const err = e as unknown;
-          const maybe =
-            err && typeof err === "object"
-              ? (err as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown })
-              : null;
-
-          const msg =
-            typeof maybe?.message === "string"
-              ? [
-                  maybe.message,
-                  typeof maybe?.code === "string" ? `Code: ${maybe.code}` : null,
-                  typeof maybe?.details === "string" ? `Details: ${maybe.details}` : null,
-                  typeof maybe?.hint === "string" ? `Hint: ${maybe.hint}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" • ")
-              : "Failed to load Daily Deal Flow.";
-
-          console.error("Daily Deal Flow query failed", {
-            leadPhone: p,
-            error: err,
-          });
-
-          setDailyFlowError(msg);
-          setDailyFlowRows([]);
-        }
-      } finally {
-        if (!cancelled) setDailyFlowLoading(false);
-      }
-    };
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [lead]);
-
-  const policyCards = useMemo(() => {
-    const all: MondayComDeal[] = [];
-
-    // Always include deals found directly by fuzzy search
-    all.push(...(mondayDeals ?? []));
-
-    // Include any deals found via SSN-expanded duplicate search (if available)
-    if (duplicateResult?.mondayDealsByGhlName) {
-      for (const deals of Object.values(duplicateResult.mondayDealsByGhlName)) {
-        all.push(...(deals ?? []));
-      }
-    }
-
-    // Deduplicate by policy_number first, otherwise by monday_item_id, otherwise by id
-    const byKey = new Map<string, MondayComDeal>();
-    for (const d of all) {
-      const key =
-        (d.policy_number && d.policy_number.trim().length ? `policy:${d.policy_number.trim()}` : null) ??
-        (d.monday_item_id && d.monday_item_id.trim().length ? `item:${d.monday_item_id.trim()}` : null) ??
-        `id:${String(d.id)}`;
-
-      if (!byKey.has(key)) byKey.set(key, d);
-    }
-
-    const unique = Array.from(byKey.values());
-    unique.sort((a, b) => {
-      const al = a.last_updated ?? "";
-      const bl = b.last_updated ?? "";
-      return bl.localeCompare(al);
-    });
-
-    return unique;
-  }, [duplicateResult, mondayDeals]);
-
-  const notesItems = useMemo(() => {
-    const items: Array<{ source: string; date: string | null; text: string }> = [];
-
-    const leadNotes = getString(lead, "notes");
-    if (leadNotes) {
-      items.push({ source: "Lead", date: getString(lead, "updated_at") ?? getString(lead, "created_at"), text: leadNotes });
-    }
-
-    for (const row of dailyFlowRows) {
-      const note = pickRowValue(row, ["notes", "note", "lead_notes"]);
-      const text = typeof note === "string" ? note.trim() : "";
-      if (text.length) {
-        const date = typeof row["date"] === "string" ? String(row["date"]) : null;
-        items.push({ source: "Daily Deal Flow", date, text });
-      }
-    }
-
-    for (const d of policyCards) {
-      const text = typeof d.notes === "string" ? d.notes.trim() : "";
-      if (text.length) {
-        items.push({ source: "Monday.com", date: d.last_updated ?? d.updated_at ?? null, text });
-      }
-    }
-
-    items.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
-    return items;
-  }, [dailyFlowRows, lead, policyCards]);
+  const {
+    lead,
+    personalLeadLoading,
+    mondayLoading,
+    duplicateLoading,
+    mondayError,
+    duplicateError,
+    policyCards,
+    policyViews,
+    selectedPolicyKey,
+    setSelectedPolicyKey,
+    selectedPolicyView,
+    verificationLoading,
+    verificationError,
+    verificationItems,
+    verificationInputValues,
+    toggleVerificationItem,
+    updateVerificationItemValue,
+    retentionModalOpen,
+    setRetentionModalOpen,
+    retentionAgent,
+    setRetentionAgent,
+    retentionAgentLocked,
+    retentionType,
+    setRetentionType,
+    retentionAgentOptions,
+    openRetentionWorkflowModal,
+    startRetentionWorkflow,
+    retentionStep,
+    setRetentionStep,
+    goToCallUpdate,
+    bankingPolicyStatus,
+    setBankingPolicyStatus,
+    bankingAccountHolderName,
+    setBankingAccountHolderName,
+    bankingBankName,
+    setBankingBankName,
+    bankingRoutingNumber,
+    setBankingRoutingNumber,
+    bankingAccountNumber,
+    setBankingAccountNumber,
+    bankingAccountType,
+    setBankingAccountType,
+    bankingDraftDate,
+    setBankingDraftDate,
+    bankingSaving,
+    bankingSaveError,
+    saveBankingInfoToMondayNotes,
+    dailyFlowLoading,
+    dailyFlowError,
+    dailyFlowRows,
+    notesItems,
+    personalName,
+    personalPhone,
+    personalEmail,
+    personalAddress1,
+    personalCity,
+    personalState,
+    personalZip,
+    personalPolicyNumber,
+    personalCarrier,
+    personalProductType,
+    personalMonthlyPremium,
+    personalDob,
+    personalSsnLast4,
+    personalAgent,
+    personalCenter,
+    personalAdditionalEntries,
+    loading,
+    error,
+    name,
+    carrier,
+    productType,
+    center,
+  } = useAssignedLeadDetails();
 
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
@@ -439,48 +152,190 @@ export default function AssignedLeadDetailsPage() {
                     ) : policyCards.length === 0 ? (
                       <div className="text-sm text-muted-foreground">No policies found.</div>
                     ) : (
-                      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-3">
-                        {policyCards.map((d) => {
-                          const status = d.policy_status ?? d.status ?? "—";
-                          const premium = d.deal_value;
-                          const vendor = d.call_center;
-                          const product = d.policy_type;
-
-                          return (
-                            <div key={d.id} className="rounded-md border bg-background p-5 space-y-3 w-full">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="text-base font-semibold text-foreground">
-                                  {d.ghl_name ?? d.deal_name ?? "Policy"}
+                      <div className="grid gap-4 lg:grid-cols-[1fr_1fr] lg:items-start">
+                        <div className="grid gap-3">
+                          {policyViews.map((p) => {
+                            const isSelected = p.key === selectedPolicyKey;
+                            return (
+                              <button
+                                key={p.key}
+                                type="button"
+                                onClick={() => setSelectedPolicyKey(p.key)}
+                                className={
+                                  "text-left rounded-md border bg-background p-4 w-full transition-colors " +
+                                  (isSelected ? "ring-2 ring-primary border-primary/40" : "hover:bg-muted/30")
+                                }
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold text-foreground truncate" title={p.clientName}>
+                                      {p.clientName}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground truncate" title={String(p.callCenter ?? "")}
+                                    >
+                                      {p.callCenter ?? "—"}
+                                    </div>
+                                  </div>
+                                  <div className="text-[11px] rounded-md bg-muted px-2 py-1 font-medium text-foreground whitespace-nowrap">
+                                    {p.status}
+                                  </div>
                                 </div>
-                                <div className="text-xs rounded-md bg-muted px-2 py-1 font-medium text-foreground">
-                                  {status}
+
+                                <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                                  <div className="text-muted-foreground">Last Updated</div>
+                                  <div className="font-semibold text-foreground text-right">
+                                    {formatValue(p.lastUpdated)}
+                                  </div>
+
+                                  <div className="text-muted-foreground">Carrier</div>
+                                  <div className="font-semibold text-foreground text-right truncate" title={p.carrier ?? undefined}>
+                                    {p.carrier ?? "—"}
+                                  </div>
+
+                                  <div className="text-muted-foreground">Policy #</div>
+                                  <div
+                                    className="font-semibold text-foreground text-right truncate"
+                                    title={p.policyNumber ?? undefined}
+                                  >
+                                    {p.policyNumber ?? "—"}
+                                  </div>
+
+                                  <div className="text-muted-foreground">Agent</div>
+                                  <div
+                                    className="font-semibold text-foreground text-right truncate"
+                                    title={p.agentName ?? undefined}
+                                  >
+                                    {p.agentName ?? "—"}
+                                  </div>
+
+                                  <div className="text-muted-foreground">Coverage</div>
+                                  <div className="font-semibold text-foreground text-right">
+                                    {formatValue(p.coverage)}
+                                  </div>
+
+                                  <div className="text-muted-foreground">Monthly Premium</div>
+                                  <div className="font-semibold text-foreground text-right">
+                                    {formatCurrency(p.monthlyPremium)}
+                                  </div>
+
+                                  <div className="text-muted-foreground">Initial Draft Date</div>
+                                  <div className="font-semibold text-foreground text-right">
+                                    {formatValue(p.initialDraftDate)}
+                                  </div>
                                 </div>
-                              </div>
 
-                              <div className="text-xs text-muted-foreground">ID: {d.monday_item_id ?? "—"}</div>
+                                <div className="mt-3">
+                                  <div className="text-xs text-muted-foreground">Status notes</div>
+                                  <div className="text-sm text-foreground line-clamp-2" title={p.statusNotes ?? undefined}>
+                                    {p.statusNotes ?? "—"}
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
 
-                              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                                <div className="text-muted-foreground">Policy #:</div>
-                                <div className="font-semibold text-foreground text-right">{d.policy_number ?? "—"}</div>
-
-                                <div className="text-muted-foreground">Carrier:</div>
-                                <div className="font-semibold text-foreground text-right">{d.carrier ?? "—"}</div>
-
-                                <div className="text-muted-foreground">Product:</div>
-                                <div className="font-semibold text-foreground text-right">{product ?? "—"}</div>
-
-                                <div className="text-muted-foreground">Premium:</div>
-                                <div className="font-semibold text-foreground text-right">{formatCurrency(premium)}</div>
-
-                                <div className="text-muted-foreground">Agent:</div>
-                                <div className="font-semibold text-foreground text-right">{d.sales_agent ?? "—"}</div>
-
-                                <div className="text-muted-foreground">Vendor:</div>
-                                <div className="font-semibold text-foreground text-right">{vendor ?? "—"}</div>
+                        <Card className="h-fit">
+                          <CardHeader className="space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <CardTitle className="text-base font-semibold">Verification Panel</CardTitle>
+                              <div className="text-xs rounded-md bg-muted px-2 py-1 font-medium text-foreground">
+                                {selectedPolicyView?.callCenter ?? "—"}
                               </div>
                             </div>
-                          );
-                        })}
+                            <CardDescription>
+                              {selectedPolicyView
+                                ? `Selected policy: ${selectedPolicyView.policyNumber ?? "—"}`
+                                : "Select a policy to view verification."}
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                              <div className="text-muted-foreground">Client Name</div>
+                              <div className="font-semibold text-foreground text-right">
+                                {selectedPolicyView?.clientName ?? "—"}
+                              </div>
+
+                              <div className="text-muted-foreground">Carrier</div>
+                              <div className="font-semibold text-foreground text-right">
+                                {selectedPolicyView?.carrier ?? "—"}
+                              </div>
+
+                              <div className="text-muted-foreground">Policy Number</div>
+                              <div className="font-semibold text-foreground text-right">
+                                {selectedPolicyView?.policyNumber ?? "—"}
+                              </div>
+
+                              <div className="text-muted-foreground">Agent</div>
+                              <div className="font-semibold text-foreground text-right">
+                                {selectedPolicyView?.agentName ?? "—"}
+                              </div>
+                            </div>
+
+                            <Separator />
+
+                            {verificationLoading ? (
+                              <div className="text-sm text-muted-foreground">Loading verification...</div>
+                            ) : verificationError ? (
+                              <div className="text-sm text-red-600">{verificationError}</div>
+                            ) : verificationItems.length === 0 ? (
+                              <div className="text-sm text-muted-foreground">No verification fields yet.</div>
+                            ) : (
+                              <div className="space-y-3">
+                                {verificationItems.map((item) => {
+                                  const itemId = typeof item.id === "string" ? item.id : null;
+                                  if (!itemId) return null;
+                                  const fieldName = typeof item.field_name === "string" ? item.field_name : "";
+                                  const checked = !!item.is_verified;
+                                  const value = verificationInputValues[itemId] ?? "";
+
+                                  return (
+                                    <div
+                                      key={itemId}
+                                      className="rounded-lg border bg-card px-3 py-2 space-y-2"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <div className="text-xs font-medium text-foreground truncate" title={fieldName}>
+                                          {titleizeKey(fieldName || "Field")}
+                                        </div>
+                                        <div className="ml-auto flex items-center gap-2">
+                                          <div className="text-[11px] text-muted-foreground">
+                                            {checked ? "Verified" : "Pending"}
+                                          </div>
+                                          <Checkbox
+                                            checked={checked}
+                                            onCheckedChange={(v) => {
+                                              void toggleVerificationItem(itemId, Boolean(v));
+                                            }}
+                                          />
+                                        </div>
+                                      </div>
+
+                                      <Input
+                                        value={value}
+                                        onChange={(e) => {
+                                          void updateVerificationItemValue(itemId, e.target.value);
+                                        }}
+                                        className="text-xs"
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+
+                            <Button
+                              type="button"
+                              className="w-full"
+                              onClick={() => {
+                                openRetentionWorkflowModal();
+                              }}
+                              disabled={!lead || typeof lead.id !== "string"}
+                            >
+                              Start Retention Workflow
+                            </Button>
+                          </CardContent>
+                        </Card>
                       </div>
                     )}
                   </div>
@@ -571,43 +426,46 @@ export default function AssignedLeadDetailsPage() {
                     <div className="rounded-md border p-4">
                       <div className="text-sm font-medium">Contact & Address</div>
                       <Separator className="my-3" />
-                      <div className="text-sm text-muted-foreground">Name: {name}</div>
-                      <div className="text-sm text-muted-foreground">Phone: {phone}</div>
-                      <div className="text-sm text-muted-foreground">Email: {email}</div>
+                      {personalLeadLoading ? (
+                        <div className="text-sm text-muted-foreground">Loading lead info...</div>
+                      ) : null}
+                      <div className="text-sm text-muted-foreground">Name: {personalName}</div>
+                      <div className="text-sm text-muted-foreground">Phone: {personalPhone}</div>
+                      <div className="text-sm text-muted-foreground">Email: {personalEmail}</div>
                       <div className="text-sm text-muted-foreground mt-3">
-                        Address: {address1}
-                        {address1 !== "-" ? ", " : ""}
-                        {city !== "-" ? `${city}, ` : ""}
-                        {state !== "-" ? state : ""}
-                        {zip !== "-" ? ` ${zip}` : ""}
+                        Address: {personalAddress1}
+                        {personalAddress1 !== "-" ? ", " : ""}
+                        {personalCity !== "-" ? `${personalCity}, ` : ""}
+                        {personalState !== "-" ? personalState : ""}
+                        {personalZip !== "-" ? ` ${personalZip}` : ""}
                       </div>
                     </div>
 
                     <div className="rounded-md border p-4">
                       <div className="text-sm font-medium">Policy & Client</div>
                       <Separator className="my-3" />
-                      <div className="text-sm text-muted-foreground">Policy #: {policyNumber}</div>
-                      <div className="text-sm text-muted-foreground">Carrier: {carrier}</div>
-                      <div className="text-sm text-muted-foreground">Product Type: {productType}</div>
-                      <div className="text-sm text-muted-foreground">Monthly Premium: {monthlyPremium}</div>
-                      <div className="text-sm text-muted-foreground mt-3">DOB: {dob}</div>
-                      <div className="text-sm text-muted-foreground">SSN (last 4): {ssnLast4}</div>
-                      <div className="text-sm text-muted-foreground mt-3">Agent: {agent}</div>
+                      <div className="text-sm text-muted-foreground">Policy #: {personalPolicyNumber}</div>
+                      <div className="text-sm text-muted-foreground">Carrier: {personalCarrier}</div>
+                      <div className="text-sm text-muted-foreground">Product Type: {personalProductType}</div>
+                      <div className="text-sm text-muted-foreground">Monthly Premium: {personalMonthlyPremium}</div>
+                      <div className="text-sm text-muted-foreground mt-3">DOB: {personalDob}</div>
+                      <div className="text-sm text-muted-foreground">SSN (last 4): {personalSsnLast4}</div>
+                      <div className="text-sm text-muted-foreground mt-3">Agent: {personalAgent}</div>
                     </div>
                   </div>
 
                   <div className="rounded-md border p-4 mt-4">
                     <div className="text-sm font-medium">Lead Source</div>
                     <Separator className="my-3" />
-                    <div className="text-sm text-muted-foreground">Center: {center}</div>
+                    <div className="text-sm text-muted-foreground">Center: {personalCenter}</div>
                   </div>
 
-                  {additionalEntries.length > 0 && (
+                  {personalAdditionalEntries.length > 0 && (
                     <div className="rounded-md border p-4 mt-4">
                       <div className="text-sm font-medium">Additional Details</div>
                       <Separator className="my-3" />
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {additionalEntries.map(([key, value]) => (
+                        {personalAdditionalEntries.map(([key, value]) => (
                           <div key={key} className="space-y-0.5">
                             <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
                               {titleizeKey(key)}
@@ -624,6 +482,239 @@ export default function AssignedLeadDetailsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={retentionModalOpen} onOpenChange={setRetentionModalOpen}>
+        <DialogContent className="sm:max-w-lg">
+          {retentionStep === "select" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Retention Workflow</DialogTitle>
+                <DialogDescription>Select agent and workflow type to proceed</DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <Label>Select Retention Agent</Label>
+                  <Select value={retentionAgent} onValueChange={setRetentionAgent} disabled={retentionAgentLocked}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {retentionAgentOptions.map((agentName) => (
+                        <SelectItem key={agentName} value={agentName}>
+                          {agentName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Retention Call Type</Label>
+                  <Select value={retentionType} onValueChange={(val) => setRetentionType(val as typeof retentionType)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="new_sale">New Sale</SelectItem>
+                      <SelectItem value="fixed_payment">Fixed Failed Payment</SelectItem>
+                      <SelectItem value="carrier_requirements">Fulfilling Carrier Requirements</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" type="button" onClick={() => setRetentionModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => void startRetentionWorkflow()}
+                  disabled={!retentionAgent || !retentionType || !selectedPolicyView?.policyNumber}
+                >
+                  Next
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
+
+          {retentionStep === "carrier_alert" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Policy Status Alert</DialogTitle>
+                <DialogDescription>
+                  This is not a pending policy. Either select a new workflow, or different policy.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    setRetentionModalOpen(false);
+                    setRetentionStep("select");
+                  }}
+                >
+                  Select Different Policy
+                </Button>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => {
+                      setRetentionType("fixed_payment");
+                      setRetentionStep("banking_form");
+                    }}
+                  >
+                    Switch to Fixing Failed Payment
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="w-full"
+                    onClick={() => {
+                      setRetentionType("new_sale");
+                      setRetentionStep("select");
+                    }}
+                  >
+                    Switch to New Sale
+                  </Button>
+                </div>
+
+                <Button type="button" className="w-full" onClick={() => void goToCallUpdate()}>
+                  Update Call Result
+                </Button>
+              </div>
+            </>
+          ) : null}
+
+          {retentionStep === "banking_form" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Banking Information</DialogTitle>
+                <DialogDescription>Add banking details and save.</DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                <div className="space-y-3">
+                  <Label>Policy Status</Label>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBankingPolicyStatus("issued")}
+                      className={
+                        "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors " +
+                        (bankingPolicyStatus === "issued"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-background text-foreground hover:bg-muted/50")
+                      }
+                    >
+                      <span className="inline-block h-3 w-3 rounded-full border border-primary">
+                        {bankingPolicyStatus === "issued" ? (
+                          <span className="block h-2 w-2 rounded-full bg-primary m-px" />
+                        ) : null}
+                      </span>
+                      <span>Policy has been issued</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBankingPolicyStatus("pending")}
+                      className={
+                        "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors " +
+                        (bankingPolicyStatus === "pending"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-background text-foreground hover:bg-muted/50")
+                      }
+                    >
+                      <span className="inline-block h-3 w-3 rounded-full border border-primary">
+                        {bankingPolicyStatus === "pending" ? (
+                          <span className="block h-2 w-2 rounded-full bg-primary m-px" />
+                        ) : null}
+                      </span>
+                      <span>Policy is pending (lead is in pending manual action on GHL)</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Account Holder Name</Label>
+                    <Input value={bankingAccountHolderName} onChange={(e) => setBankingAccountHolderName(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Bank Name</Label>
+                    <Input value={bankingBankName} onChange={(e) => setBankingBankName(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Routing Number</Label>
+                    <Input value={bankingRoutingNumber} onChange={(e) => setBankingRoutingNumber(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Account Number</Label>
+                    <Input value={bankingAccountNumber} onChange={(e) => setBankingAccountNumber(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Account Type</Label>
+                    <Select
+                      value={bankingAccountType}
+                      onValueChange={(v) => {
+                        if (v === "Checking" || v === "Savings" || v === "") {
+                          setBankingAccountType(v);
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select Type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Checking">Checking</SelectItem>
+                        <SelectItem value="Savings">Savings</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Draft Date</Label>
+                    <Input type="date" value={bankingDraftDate} onChange={(e) => setBankingDraftDate(e.target.value)} />
+                  </div>
+                </div>
+
+                {bankingSaveError ? <div className="text-sm text-red-600">{bankingSaveError}</div> : null}
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" type="button" onClick={() => setRetentionStep("select")}>Back</Button>
+                <Button
+                  type="button"
+                  disabled={
+                    bankingSaving ||
+                    !bankingAccountHolderName ||
+                    !bankingBankName ||
+                    !bankingRoutingNumber ||
+                    !bankingAccountNumber ||
+                    !bankingAccountType ||
+                    !bankingDraftDate
+                  }
+                  onClick={() => {
+                    const run = async () => {
+                      await saveBankingInfoToMondayNotes();
+                      await goToCallUpdate();
+                    };
+                    void run();
+                  }}
+                >
+                  {bankingSaving ? "Saving..." : "Save and Continue"}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
