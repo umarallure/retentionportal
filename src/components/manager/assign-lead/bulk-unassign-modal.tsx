@@ -5,7 +5,6 @@ import React from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
@@ -32,11 +31,6 @@ type DealRow = {
   monday_item_id: string | null;
 };
 
-type LeadRow = {
-  id: string;
-  submission_id: string | null;
-};
-
 type AssignmentRow = {
   id: string;
   deal_id?: number | null;
@@ -59,7 +53,6 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
     toastRef.current = toast;
   }, [toast]);
 
-  const [groupTitle, setGroupTitle] = React.useState<string>("");
   const [selectedStages, setSelectedStages] = React.useState<string[]>([]);
   const [agentId, setAgentId] = React.useState<string>("all");
 
@@ -73,7 +66,7 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
   const [deleting, setDeleting] = React.useState(false);
 
   const reset = React.useCallback(() => {
-    setGroupTitle("");
+    setSelectedStages([]);
     setAgentId("all");
     setGroupCount(null);
     setAssignedRows([]);
@@ -112,10 +105,10 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
 
     setLoading(true);
     try {
-      let dealsQuery = supabase
+      const dealsQuery = supabase
         .from("monday_com_deals")
-        .select("monday_item_id", { count: "exact" })
-        .eq("group_title", groupTitle)
+        .select("id,monday_item_id", { count: "exact" })
+        .in("ghl_stage", selectedStages)
         .not("monday_item_id", "is", null)
         .order("last_updated", { ascending: false, nullsFirst: false });
 
@@ -135,14 +128,6 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
         setAssignedRows([]);
         return;
       }
-
-      const { data: leadRows, error: leadsError } = await supabase
-        .from("leads")
-        .select("id, submission_id")
-        .in("submission_id", submissionIds)
-        .limit(10000);
-
-      if (leadsError) throw leadsError;
 
       const dealIds = Array.from(new Set(((dealRows ?? []) as DealRow[]).map((d) => d.id).filter((v): v is number => !!v)));
 
@@ -170,7 +155,7 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
       console.error("[bulk-unassign] loadAssigned error", e);
       toastRef.current({
         title: "Failed to load",
-        description: "Could not load assigned leads for this GHL stage.",
+        description: "Could not load assigned leads for the selected GHL stage(s).",
         variant: "destructive",
       });
       setGroupCount(null);
@@ -304,7 +289,7 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
                     <span className="inline-flex items-center">
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
                     </span>
-                  ) : groupTitle ? (
+                  ) : selectedStages.length > 0 ? (
                     <>
                       Total leads in this stage: <span className="font-medium">{groupCount ?? "—"}</span>
                       <span className="mx-2">•</span>
@@ -315,7 +300,11 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
                   )}
                 </div>
               </div>
-              <Button variant="outline" onClick={loadAssigned} disabled={!groupTitle || loading || deleting}>
+              <Button
+                variant="outline"
+                onClick={loadAssigned}
+                disabled={selectedStages.length === 0 || loading || deleting}
+              >
                 {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Reload
               </Button>
