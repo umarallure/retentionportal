@@ -183,6 +183,11 @@ export function useAssignedLeadDetails() {
   const idParam = router.query.id;
   const dealIdParam = router.query.dealId;
 
+  const rawDealId =
+    typeof dealIdParam === "string" ? dealIdParam : Array.isArray(dealIdParam) ? dealIdParam[0] : undefined;
+  const parsedDealId = rawDealId ? Number(rawDealId) : null;
+  const dealId = parsedDealId != null && Number.isFinite(parsedDealId) ? parsedDealId : null;
+
   const [lead, setLead] = useState<LeadRecord | null>(null);
   const [personalLead, setPersonalLead] = useState<LeadRecord | null>(null);
   const [personalLeadLoading, setPersonalLeadLoading] = useState(false);
@@ -222,6 +227,9 @@ export function useAssignedLeadDetails() {
   const [bankingDraftDate, setBankingDraftDate] = useState("");
   const [bankingSaving, setBankingSaving] = useState(false);
   const [bankingSaveError, setBankingSaveError] = useState<string | null>(null);
+
+  const [assignedDealIds, setAssignedDealIds] = useState<number[]>([]);
+  const [assignedDealsLoading, setAssignedDealsLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -313,11 +321,6 @@ export function useAssignedLeadDetails() {
 
   useEffect(() => {
     if (!router.isReady) return;
-
-    const rawDealId =
-      typeof dealIdParam === "string" ? dealIdParam : Array.isArray(dealIdParam) ? dealIdParam[0] : undefined;
-    const parsedDealId = rawDealId ? Number(rawDealId) : null;
-    const dealId = parsedDealId != null && Number.isFinite(parsedDealId) ? parsedDealId : null;
 
     const id = typeof idParam === "string" ? idParam : Array.isArray(idParam) ? idParam[0] : undefined;
     const leadId = id && id.trim().length ? id : null;
@@ -443,7 +446,98 @@ export function useAssignedLeadDetails() {
     return () => {
       cancelled = true;
     };
-  }, [router.isReady, dealIdParam, idParam]);
+  }, [router.isReady, dealIdParam, idParam, dealId]);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    if (!dealId) {
+      setAssignedDealIds([]);
+      setAssignedDealsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAssignedDealsForAgent = async () => {
+      setAssignedDealsLoading(true);
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError) throw sessionError;
+        if (!session?.user) {
+          if (!cancelled) setAssignedDealIds([]);
+          return;
+        }
+
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (profileError) throw profileError;
+        const profileId = (profile?.id as string | null) ?? null;
+        if (!profileId) {
+          if (!cancelled) setAssignedDealIds([]);
+          return;
+        }
+
+        const { data: rows, error: assignedError } = await supabase
+          .from("retention_assigned_leads")
+          .select("deal_id, assigned_at")
+          .eq("assignee_profile_id", profileId)
+          .eq("status", "active")
+          .order("assigned_at", { ascending: false })
+          .limit(5000);
+
+        if (assignedError) throw assignedError;
+
+        const ids = (rows ?? [])
+          .map((r) => (typeof r?.deal_id === "number" ? (r.deal_id as number) : null))
+          .filter((v): v is number => v != null);
+
+        if (!cancelled) setAssignedDealIds(ids);
+      } catch (e) {
+        console.error("[assigned-lead-details] load assigned deal ids error", e);
+        if (!cancelled) setAssignedDealIds([]);
+      } finally {
+        if (!cancelled) setAssignedDealsLoading(false);
+      }
+    };
+
+    void loadAssignedDealsForAgent();
+    return () => {
+      cancelled = true;
+    };
+  }, [router.isReady, dealId]);
+
+  const currentAssignedIndex = useMemo(() => {
+    if (!dealId) return -1;
+    return assignedDealIds.indexOf(dealId);
+  }, [assignedDealIds, dealId]);
+
+  const previousAssignedDealId = useMemo(() => {
+    if (currentAssignedIndex < 0) return null;
+    return assignedDealIds[currentAssignedIndex - 1] ?? null;
+  }, [assignedDealIds, currentAssignedIndex]);
+
+  const nextAssignedDealId = useMemo(() => {
+    if (currentAssignedIndex < 0) return null;
+    return assignedDealIds[currentAssignedIndex + 1] ?? null;
+  }, [assignedDealIds, currentAssignedIndex]);
+
+  const goToPreviousAssignedLead = async () => {
+    if (!previousAssignedDealId) return;
+    await router.push(`/agent/assigned-lead-details?dealId=${encodeURIComponent(String(previousAssignedDealId))}`);
+  };
+
+  const goToNextAssignedLead = async () => {
+    if (!nextAssignedDealId) return;
+    await router.push(`/agent/assigned-lead-details?dealId=${encodeURIComponent(String(nextAssignedDealId))}`);
+  };
 
   useEffect(() => {
     if (selectedDeal) {
@@ -1349,6 +1443,12 @@ export function useAssignedLeadDetails() {
   return {
     router,
     idParam,
+    dealId,
+    previousAssignedDealId,
+    nextAssignedDealId,
+    assignedDealsLoading,
+    goToPreviousAssignedLead,
+    goToNextAssignedLead,
     selectedDeal,
     lead,
     personalLead,

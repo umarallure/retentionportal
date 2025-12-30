@@ -28,6 +28,12 @@ import {
 export default function AssignedLeadDetailsPage() {
   const {
     lead,
+    dealId,
+    previousAssignedDealId,
+    nextAssignedDealId,
+    assignedDealsLoading,
+    goToPreviousAssignedLead,
+    goToNextAssignedLead,
     selectedDeal,
     personalLeadLoading,
     mondayLoading,
@@ -118,12 +124,36 @@ export default function AssignedLeadDetailsPage() {
       <div className="mx-auto w-full max-w-6xl">
         <Card>
           <CardHeader>
-            <CardTitle>{name}</CardTitle>
-            <CardDescription>
-              {carrier !== "-" ? carrier : ""}
-              {productType !== "-" ? ` • ${productType}` : ""}
-              {center !== "-" ? ` • ${center}` : ""}
-            </CardDescription>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <CardTitle>{name}</CardTitle>
+                <CardDescription>
+                  {carrier !== "-" ? carrier : ""}
+                  {productType !== "-" ? ` • ${productType}` : ""}
+                  {center !== "-" ? ` • ${center}` : ""}
+                </CardDescription>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={assignedDealsLoading || !dealId || !previousAssignedDealId}
+                  onClick={() => void goToPreviousAssignedLead()}
+                >
+                  Previous Lead
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={assignedDealsLoading || !dealId || !nextAssignedDealId}
+                  onClick={() => void goToNextAssignedLead()}
+                >
+                  Next Lead
+                </Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">
             {loading ? (
