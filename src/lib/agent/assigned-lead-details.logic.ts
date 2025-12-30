@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 
 import { supabase } from "@/lib/supabase";
@@ -9,15 +9,6 @@ import {
   type DuplicateLeadFinderResult,
 } from "@/lib/duplicate-leads";
 import type { MondayComDeal } from "@/types";
-
- type RetentionType = "new_sale" | "fixed_payment" | "carrier_requirements";
-
-type RetentionModalStep = "select" | "carrier_alert" | "banking_form";
-
- type RetentionAgentOption = {
-   profile_id: string;
-   display_name: string;
- };
 
 export type LeadRecord = Record<string, unknown>;
 
@@ -211,113 +202,9 @@ export function useAssignedLeadDetails() {
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [verificationInputValues, setVerificationInputValues] = useState<Record<string, string>>({});
 
-  const [retentionModalOpen, setRetentionModalOpen] = useState(false);
-  const [retentionAgent, setRetentionAgent] = useState<string>("");
-  const [retentionType, setRetentionType] = useState<RetentionType | "">("");
-  const [retentionAgentLocked, setRetentionAgentLocked] = useState(false);
-  const [retentionAgentOptions, setRetentionAgentOptions] = useState<RetentionAgentOption[]>([]);
-
-  const [retentionStep, setRetentionStep] = useState<RetentionModalStep>("select");
-  const [bankingPolicyStatus, setBankingPolicyStatus] = useState<"issued" | "pending">("issued");
-  const [bankingAccountHolderName, setBankingAccountHolderName] = useState("");
-  const [bankingBankName, setBankingBankName] = useState("");
-  const [bankingRoutingNumber, setBankingRoutingNumber] = useState("");
-  const [bankingAccountNumber, setBankingAccountNumber] = useState("");
-  const [bankingAccountType, setBankingAccountType] = useState<"Checking" | "Savings" | "">("");
-  const [bankingDraftDate, setBankingDraftDate] = useState("");
-  const [bankingSaving, setBankingSaving] = useState(false);
-  const [bankingSaveError, setBankingSaveError] = useState<string | null>(null);
-
   const [assignedDealIds, setAssignedDealIds] = useState<number[]>([]);
   const [assignedDealsLoading, setAssignedDealsLoading] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadLoggedInAgent = async () => {
-      try {
-        const {
-          data: { session },
-          error: sessionError,
-        } = await supabase.auth.getSession();
-
-        if (sessionError) throw sessionError;
-        if (!session?.user) return;
-
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("display_name")
-          .eq("user_id", session.user.id)
-          .maybeSingle();
-
-        if (profileError) throw profileError;
-
-        const name = (profile?.display_name as string | null) ?? null;
-        if (!cancelled && name && name.trim().length) {
-          setRetentionAgent(name);
-          setRetentionAgentLocked(true);
-        }
-      } catch {
-        if (!cancelled) setRetentionAgentLocked(false);
-      }
-    };
-
-    void loadLoggedInAgent();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadRetentionAgents = async () => {
-      try {
-        const { data: raRows, error: raError } = await supabase
-          .from("retention_agents")
-          .select("profile_id")
-          .eq("active", true);
-
-        if (raError) throw raError;
-
-        const profileIds = (raRows ?? [])
-          .map((row) => (row?.profile_id as string | null) ?? null)
-          .filter((v): v is string => !!v && v.length > 0);
-
-        if (profileIds.length === 0) {
-          if (!cancelled) setRetentionAgentOptions([]);
-          return;
-        }
-
-        const { data: profileRows, error: profilesError } = await supabase
-          .from("profiles")
-          .select("id, display_name")
-          .in("id", profileIds);
-
-        if (profilesError) throw profilesError;
-
-        const mapped: RetentionAgentOption[] = (profileRows ?? [])
-          .map((p) => {
-            const id = (p?.id as string | null) ?? null;
-            const name = (p?.display_name as string | null) ?? null;
-            if (!id || !name || !name.trim().length) return null;
-            return { profile_id: id, display_name: name };
-          })
-          .filter((v): v is RetentionAgentOption => !!v);
-
-        mapped.sort((a, b) => a.display_name.localeCompare(b.display_name));
-
-        if (!cancelled) setRetentionAgentOptions(mapped);
-      } catch (e) {
-        console.error("[assigned-lead-details] load retention agents error", e);
-        if (!cancelled) setRetentionAgentOptions([]);
-      }
-    };
-
-    void loadRetentionAgents();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!router.isReady) return;
@@ -940,16 +827,40 @@ export function useAssignedLeadDetails() {
     return unique;
   }, [duplicateResult, mondayDeals]);
 
+  const setSelectedPolicyKeyAndSyncUrlWithDealId = useCallback(
+    async (nextKey: string | null) => {
+      setSelectedPolicyKey(nextKey);
+
+      if (!router.isReady || !nextKey) return;
+
+      const match = (policyCards ?? []).find((d) => {
+        const key =
+          (d.monday_item_id && d.monday_item_id.trim().length ? `item:${d.monday_item_id.trim()}` : null) ??
+          `id:${String(d.id)}`;
+        return key === nextKey;
+      });
+
+      const nextDealId = match && typeof match.id === "number" && Number.isFinite(match.id) ? match.id : null;
+      if (!nextDealId) return;
+      if (dealId === nextDealId) return;
+
+      const query = { ...router.query, dealId: String(nextDealId) };
+      await router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    },
+    [dealId, policyCards, router],
+  );
+
   useEffect(() => {
     if (selectedPolicyKey) return;
     if (!policyCards || policyCards.length === 0) return;
 
-    const first = policyCards[0];
+    const fromUrl = dealId ? policyCards.find((d) => d.id === dealId) : null;
+    const chosen = fromUrl ?? policyCards[0];
     const key =
-      (first.monday_item_id && first.monday_item_id.trim().length ? `item:${first.monday_item_id.trim()}` : null) ??
-      `id:${String(first.id)}`;
+      (chosen.monday_item_id && chosen.monday_item_id.trim().length ? `item:${chosen.monday_item_id.trim()}` : null) ??
+      `id:${String(chosen.id)}`;
     setSelectedPolicyKey(key);
-  }, [policyCards, selectedPolicyKey]);
+  }, [dealId, policyCards, selectedPolicyKey]);
 
   const policyViews = useMemo(() => {
     const ddfRows = (dailyFlowRows ?? []) as Array<Record<string, unknown>>;
@@ -1290,105 +1201,6 @@ export function useAssignedLeadDetails() {
     if (updateErr) throw updateErr;
   };
 
-  const openRetentionWorkflowModal = () => {
-    setRetentionStep("select");
-    setBankingSaveError(null);
-    setRetentionModalOpen(true);
-  };
-
-  const startRetentionWorkflow = async () => {
-    const leadId = typeof lead?.["id"] === "string" ? (lead["id"] as string) : null;
-    if (!leadId) return;
-
-    if (!retentionAgent || !retentionType) return;
-
-    if (retentionType === "carrier_requirements") {
-      setRetentionStep("carrier_alert");
-      return;
-    }
-
-    if (retentionType === "fixed_payment") {
-      setRetentionStep("banking_form");
-      return;
-    }
-
-    // For now, route directly to call update for other retention types.
-    const policyNumberForRoute = selectedPolicyView?.policyNumber ?? null;
-    if (!policyNumberForRoute) return;
-    setRetentionModalOpen(false);
-    await router.push(
-      `/agent/call-update?leadId=${encodeURIComponent(leadId)}&policyNumber=${encodeURIComponent(
-        policyNumberForRoute,
-      )}&retentionAgent=${encodeURIComponent(retentionAgent)}&retentionType=${encodeURIComponent(retentionType)}`,
-    );
-  };
-
-  const goToCallUpdate = async () => {
-    const leadId = typeof lead?.["id"] === "string" ? (lead["id"] as string) : null;
-    if (!leadId) return;
-
-    const policyNumberForRoute = selectedPolicyView?.policyNumber ?? null;
-    if (!policyNumberForRoute) return;
-
-    if (!retentionAgent || !retentionType) return;
-
-    setRetentionModalOpen(false);
-    await router.push(
-      `/agent/call-update?leadId=${encodeURIComponent(leadId)}&policyNumber=${encodeURIComponent(
-        policyNumberForRoute,
-      )}&retentionAgent=${encodeURIComponent(retentionAgent)}&retentionType=${encodeURIComponent(retentionType)}`,
-    );
-  };
-
-  const saveBankingInfoToMondayNotes = async () => {
-    const policyNumberForSave = selectedPolicyView?.policyNumber ?? null;
-    if (!policyNumberForSave) return;
-
-    setBankingSaving(true);
-    setBankingSaveError(null);
-
-    try {
-      const payload = {
-        policy_status: bankingPolicyStatus,
-        account_holder_name: bankingAccountHolderName,
-        bank_name: bankingBankName,
-        routing_number: bankingRoutingNumber,
-        account_number: bankingAccountNumber,
-        account_type: bankingAccountType,
-        draft_date: bankingDraftDate,
-      };
-
-      const { data: dealRow, error: dealErr } = await supabase
-        .from("monday_com_deals")
-        .select("id, notes, last_updated, updated_at")
-        .eq("policy_number", policyNumberForSave)
-        .order("last_updated", { ascending: false, nullsFirst: false })
-        .order("updated_at", { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (dealErr) throw dealErr;
-      if (!dealRow?.id) throw new Error("No monday_com_deals row found for this policy number.");
-
-      const existingNotes = typeof dealRow.notes === "string" ? dealRow.notes : "";
-      const stamp = new Date().toISOString();
-      const block = `\n\n[Retention Banking Update ${stamp}]\n${JSON.stringify(payload)}`;
-      const nextNotes = `${existingNotes ?? ""}${block}`.trim();
-
-      const { error: updateErr } = await supabase
-        .from("monday_com_deals")
-        .update({ notes: nextNotes })
-        .eq("id", dealRow.id);
-
-      if (updateErr) throw updateErr;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to save banking info.";
-      setBankingSaveError(msg);
-      throw e;
-    } finally {
-      setBankingSaving(false);
-    }
-  };
 
   const updateVerificationItemValue = async (itemId: string, value: string) => {
     setVerificationInputValues((prev) => ({ ...prev, [itemId]: value }));
@@ -1444,11 +1256,6 @@ export function useAssignedLeadDetails() {
     router,
     idParam,
     dealId,
-    previousAssignedDealId,
-    nextAssignedDealId,
-    assignedDealsLoading,
-    goToPreviousAssignedLead,
-    goToNextAssignedLead,
     selectedDeal,
     lead,
     personalLead,
@@ -1500,7 +1307,7 @@ export function useAssignedLeadDetails() {
     policyCards,
     policyViews,
     selectedPolicyKey,
-    setSelectedPolicyKey,
+    setSelectedPolicyKey: setSelectedPolicyKeyAndSyncUrlWithDealId,
     selectedPolicyView,
     verificationSessionId,
     verificationItems,
@@ -1509,42 +1316,11 @@ export function useAssignedLeadDetails() {
     verificationInputValues,
     toggleVerificationItem,
     updateVerificationItemValue,
-    retentionModalOpen,
-    setRetentionModalOpen,
-    retentionAgent,
-    setRetentionAgent,
-    retentionAgentLocked,
-    retentionType,
-    setRetentionType,
-    retentionAgentOptions: retentionAgentOptions
-      .map((a) => a.display_name)
-      .concat(
-        retentionAgent && !retentionAgentOptions.some((a) => a.display_name === retentionAgent)
-          ? [retentionAgent]
-          : [],
-      ),
-    openRetentionWorkflowModal,
-    startRetentionWorkflow,
-    retentionStep,
-    setRetentionStep,
-    goToCallUpdate,
-    bankingPolicyStatus,
-    setBankingPolicyStatus,
-    bankingAccountHolderName,
-    setBankingAccountHolderName,
-    bankingBankName,
-    setBankingBankName,
-    bankingRoutingNumber,
-    setBankingRoutingNumber,
-    bankingAccountNumber,
-    setBankingAccountNumber,
-    bankingAccountType,
-    setBankingAccountType,
-    bankingDraftDate,
-    setBankingDraftDate,
-    bankingSaving,
-    bankingSaveError,
-    saveBankingInfoToMondayNotes,
+    assignedDealsLoading,
+    previousAssignedDealId,
+    nextAssignedDealId,
+    goToPreviousAssignedLead,
+    goToNextAssignedLead,
     notesItems,
   };
 }

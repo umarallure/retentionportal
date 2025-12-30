@@ -7,15 +7,6 @@ import { Button } from "@/components/ui/button";
 export default function AgentReportCardPage() {
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Agent Report Card</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Evaluate individual retention agent performance: conversion, call volume, task completion, and lead aging.
-          </p>
-        </div>
-      </div>
-
       <div className="mx-auto">
         <Card>
           <CardHeader>

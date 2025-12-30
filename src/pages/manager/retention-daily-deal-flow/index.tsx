@@ -208,15 +208,6 @@ export default function RetentionDailyDealFlowPage() {
   return (
     <div className="w-full px-4 md:px-8 py-10 min-h-screen bg-muted/20">
       <div className="max-w-6xl mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Retention Daily Deal Flow</h1>
-            <p className="text-muted-foreground text-sm mt-1">
-              View all active leads across agents. Filter by Agent, Status, or Source to monitor workload and bottlenecks.
-            </p>
-          </div>
-        </div>
-
         <Card>
           <CardHeader>
             <CardTitle>All Leads</CardTitle>

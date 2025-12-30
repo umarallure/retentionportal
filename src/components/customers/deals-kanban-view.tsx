@@ -4,7 +4,8 @@ import * as React from "react";
 
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FilterIcon, SearchIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { FilterIcon, RefreshCcw, SearchIcon } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 import { DealsKanbanColumn } from "@/components/customers/deals-kanban-column";
@@ -86,6 +87,11 @@ function colorForGroupTitle(title: string) {
   return stableColorFromString(title);
 }
 
+type DealsKanbanViewProps = {
+  onRefresh?: () => void;
+  refreshLoading?: boolean;
+};
+
 function buildGroupQuery(group: DealGroup, search: string, page: number, pageSize: number) {
   const from = (page - 1) * pageSize;
   const to = from + pageSize;
@@ -153,7 +159,8 @@ function buildGroupQuery(group: DealGroup, search: string, page: number, pageSiz
   return q;
 }
 
-export function DealsKanbanView() {
+export function DealsKanbanView(props: DealsKanbanViewProps) {
+  const { onRefresh, refreshLoading } = props;
   const [search, setSearch] = React.useState("");
   const [groupFilter, setGroupFilter] = React.useState<string>("all");
   const [matchingGroupTitles, setMatchingGroupTitles] = React.useState<Set<string> | null>(null);
@@ -392,6 +399,19 @@ export function DealsKanbanView() {
               ))}
             </SelectContent>
           </Select>
+
+          {onRefresh ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRefresh}
+              disabled={!!refreshLoading}
+              className="w-fit shadow-sm bg-card hover:bg-muted h-10"
+            >
+              <RefreshCcw className={`mr-2 size-4 ${refreshLoading ? "animate-spin" : ""}`} />
+              {refreshLoading ? "Syncing..." : "Refresh Board"}
+            </Button>
+          ) : null}
         </div>
       </div>
 

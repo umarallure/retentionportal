@@ -8,16 +8,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import {
   formatCurrency,
   formatValue,
   pickRowValue,
@@ -35,6 +25,7 @@ export default function AssignedLeadDetailsPage() {
     goToPreviousAssignedLead,
     goToNextAssignedLead,
     selectedDeal,
+    router,
     personalLeadLoading,
     mondayLoading,
     duplicateLoading,
@@ -45,43 +36,12 @@ export default function AssignedLeadDetailsPage() {
     selectedPolicyKey,
     setSelectedPolicyKey,
     selectedPolicyView,
-    verificationSessionId,
     verificationLoading,
     verificationError,
     verificationItems,
     verificationInputValues,
     toggleVerificationItem,
     updateVerificationItemValue,
-    retentionModalOpen,
-    setRetentionModalOpen,
-    retentionAgent,
-    setRetentionAgent,
-    retentionAgentLocked,
-    retentionType,
-    setRetentionType,
-    retentionAgentOptions,
-    openRetentionWorkflowModal,
-    startRetentionWorkflow,
-    retentionStep,
-    setRetentionStep,
-    goToCallUpdate,
-    bankingPolicyStatus,
-    setBankingPolicyStatus,
-    bankingAccountHolderName,
-    setBankingAccountHolderName,
-    bankingBankName,
-    setBankingBankName,
-    bankingRoutingNumber,
-    setBankingRoutingNumber,
-    bankingAccountNumber,
-    setBankingAccountNumber,
-    bankingAccountType,
-    setBankingAccountType,
-    bankingDraftDate,
-    setBankingDraftDate,
-    bankingSaving,
-    bankingSaveError,
-    saveBankingInfoToMondayNotes,
     dailyFlowLoading,
     dailyFlowError,
     dailyFlowRows,
@@ -112,15 +72,6 @@ export default function AssignedLeadDetailsPage() {
 
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Lead Details</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Detailed information for the assigned lead.
-          </p>
-        </div>
-      </div>
-
       <div className="mx-auto w-full max-w-6xl">
         <Card>
           <CardHeader>
@@ -189,10 +140,17 @@ export default function AssignedLeadDetailsPage() {
                           {policyViews.map((p) => {
                             const isSelected = p.key === selectedPolicyKey;
                             return (
-                              <button
+                              <div
                                 key={p.key}
-                                type="button"
                                 onClick={() => setSelectedPolicyKey(p.key)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    setSelectedPolicyKey(p.key);
+                                  }
+                                }}
+                                role="button"
+                                tabIndex={0}
                                 className={
                                   "text-left rounded-md border bg-background p-4 w-full transition-colors " +
                                   (isSelected ? "ring-2 ring-primary border-primary/40" : "hover:bg-muted/30")
@@ -264,7 +222,79 @@ export default function AssignedLeadDetailsPage() {
                                     {p.statusNotes ?? "—"}
                                   </div>
                                 </div>
-                              </button>
+
+                                {isSelected ? (
+                                  <div className="mt-4">
+                                    <Button
+                                      type="button"
+                                      className="w-full"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+
+                                        const leadIdForRoute = typeof lead?.id === "string" ? lead.id : null;
+                                        const policyNumberForRoute = p.policyNumber ?? null;
+                                        const callCenterForRoute = p.callCenter ?? null;
+                                        const carrierForRoute = p.carrier ?? null;
+                                        const clientNameForRoute = p.clientName ?? null;
+                                        const raw = (p.raw ?? null) as unknown as Record<string, unknown> | null;
+                                        const phoneNumberForRoute = raw && typeof raw["phone_number"] === "string" ? (raw["phone_number"] as string) : null;
+                                        const dealIdForRoute = raw && typeof raw["id"] === "number" ? (raw["id"] as number) : null;
+                                        const dobForRoute = personalDob !== "-" ? personalDob : "";
+                                        const ghlStageForRoute = selectedDeal?.ghl_stage ?? "";
+
+                                        const banking = (() => {
+                                          const fields: Record<string, string> = {};
+                                          for (const item of verificationItems) {
+                                            const itemId = typeof item?.id === "string" ? (item.id as string) : null;
+                                            if (!itemId) continue;
+                                            const fieldName = typeof item?.field_name === "string" ? (item.field_name as string) : "";
+                                            const key = fieldName.trim().toLowerCase();
+                                            if (!key) continue;
+                                            const v = (verificationInputValues[itemId] ?? "").toString().trim();
+                                            if (!v) continue;
+                                            fields[key] = v;
+                                          }
+
+                                          const find = (pred: (k: string) => boolean) => {
+                                            for (const [k, v] of Object.entries(fields)) {
+                                              if (pred(k)) return v;
+                                            }
+                                            return "";
+                                          };
+
+                                          return {
+                                            institutionName: find((k) => k.includes("institution") || k.includes("bank name")),
+                                            beneficiaryRouting: find((k) => k.includes("beneficiary routing") || k.includes("routing")),
+                                            beneficiaryAccount: find((k) => k.includes("beneficiary account") || k.includes("account")),
+                                            accountType: find((k) => k.includes("account type")),
+                                          };
+                                        })();
+
+                                        if (!leadIdForRoute || !policyNumberForRoute || policyNumberForRoute === "—") return;
+
+                                        void router.push(
+                                          `/agent/retention-workflow?leadId=${encodeURIComponent(leadIdForRoute)}` +
+                                            `&dealId=${encodeURIComponent(String(dealIdForRoute ?? ""))}` +
+                                            `&policyNumber=${encodeURIComponent(policyNumberForRoute)}` +
+                                            `&callCenter=${encodeURIComponent(String(callCenterForRoute ?? ""))}` +
+                                            `&carrier=${encodeURIComponent(String(carrierForRoute ?? ""))}` +
+                                            `&clientName=${encodeURIComponent(String(clientNameForRoute ?? ""))}` +
+                                            `&phoneNumber=${encodeURIComponent(String(phoneNumberForRoute ?? ""))}` +
+                                            `&dob=${encodeURIComponent(String(dobForRoute))}` +
+                                            `&ghlStage=${encodeURIComponent(String(ghlStageForRoute))}` +
+                                            `&bankName=${encodeURIComponent(banking.institutionName)}` +
+                                            `&routingNumber=${encodeURIComponent(banking.beneficiaryRouting)}` +
+                                            `&accountNumber=${encodeURIComponent(banking.beneficiaryAccount)}` +
+                                            `&accountType=${encodeURIComponent(banking.accountType)}`,
+                                        );
+                                      }}
+                                      disabled={!lead || typeof lead.id !== "string" || !p.policyNumber}
+                                    >
+                                      Start Retention Workflow
+                                    </Button>
+                                  </div>
+                                ) : null}
+                              </div>
                             );
                           })}
                         </div>
@@ -292,10 +322,7 @@ export default function AssignedLeadDetailsPage() {
                               <TableHead className="whitespace-nowrap">Lead Vendor</TableHead>
                               <TableHead className="whitespace-nowrap">Insured Name</TableHead>
                               <TableHead className="whitespace-nowrap">Phone Number</TableHead>
-                              <TableHead className="whitespace-nowrap">Buffer Agent</TableHead>
-                              <TableHead className="whitespace-nowrap">Retention Agent</TableHead>
                               <TableHead className="whitespace-nowrap">Agent</TableHead>
-                              <TableHead className="whitespace-nowrap">Licensed Account</TableHead>
                               <TableHead className="whitespace-nowrap">Status</TableHead>
                               <TableHead className="whitespace-nowrap">Call Result</TableHead>
                               <TableHead className="whitespace-nowrap">Carrier</TableHead>
@@ -303,12 +330,6 @@ export default function AssignedLeadDetailsPage() {
                               <TableHead className="whitespace-nowrap">Draft Date</TableHead>
                               <TableHead className="whitespace-nowrap">Monthly Premium</TableHead>
                               <TableHead className="whitespace-nowrap">Face Amount</TableHead>
-                              <TableHead className="whitespace-nowrap">Policy Number</TableHead>
-                              <TableHead className="whitespace-nowrap">Placement Status</TableHead>
-                              <TableHead className="whitespace-nowrap">From Callback</TableHead>
-                              <TableHead className="whitespace-nowrap">Is Callback</TableHead>
-                              <TableHead className="text-right whitespace-nowrap">Retention Call</TableHead>
-                              <TableHead className="whitespace-nowrap">Sync Status</TableHead>
                               <TableHead className="whitespace-nowrap">Notes</TableHead>
                             </TableRow>
                           </TableHeader>
@@ -319,10 +340,7 @@ export default function AssignedLeadDetailsPage() {
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["lead_vendor"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["insured_name"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["client_phone_number"]))}</TableCell>
-                                <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["buffer_agent"]))}</TableCell>
-                                <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["retention_agent"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["agent"]))}</TableCell>
-                                <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["licensed_agent_account"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["status"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["call_result"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["carrier"]))}</TableCell>
@@ -330,12 +348,6 @@ export default function AssignedLeadDetailsPage() {
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["draft_date"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["monthly_premium"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["face_amount"]))}</TableCell>
-                                <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["policy_number"]))}</TableCell>
-                                <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["placement_status"]))}</TableCell>
-                                <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["from_callback"]))}</TableCell>
-                                <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["is_callback"]))}</TableCell>
-                                <TableCell className="text-right whitespace-nowrap">{formatValue(pickRowValue(row, ["is_retention_call"]))}</TableCell>
-                                <TableCell className="whitespace-nowrap">{formatValue(pickRowValue(row, ["sync_status"]))}</TableCell>
                                 <TableCell className="whitespace-nowrap max-w-[320px] truncate" title={String(pickRowValue(row, ["notes"]) ?? "")}>{formatValue(pickRowValue(row, ["notes"]))}</TableCell>
                               </TableRow>
                             ))}
@@ -522,19 +534,6 @@ export default function AssignedLeadDetailsPage() {
                       </div>
                     )}
 
-                    <Button
-                      type="button"
-                      className="w-full"
-                      onClick={() => {
-                        openRetentionWorkflowModal();
-                      }}
-                      disabled={
-                        (!lead || typeof lead.id !== "string") &&
-                        (!verificationSessionId || typeof verificationSessionId !== "string")
-                      }
-                    >
-                      Start Retention Workflow
-                    </Button>
                   </CardContent>
                 </Card>
               </div>
@@ -542,239 +541,6 @@ export default function AssignedLeadDetailsPage() {
           </CardContent>
         </Card>
       </div>
-
-      <Dialog open={retentionModalOpen} onOpenChange={setRetentionModalOpen}>
-        <DialogContent className="sm:max-w-lg">
-          {retentionStep === "select" ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Retention Workflow</DialogTitle>
-                <DialogDescription>Select agent and workflow type to proceed</DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <Label>Select Retention Agent</Label>
-                  <Select value={retentionAgent} onValueChange={setRetentionAgent} disabled={retentionAgentLocked}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {retentionAgentOptions.map((agentName) => (
-                        <SelectItem key={agentName} value={agentName}>
-                          {agentName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Retention Call Type</Label>
-                  <Select value={retentionType} onValueChange={(val) => setRetentionType(val as typeof retentionType)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="new_sale">New Sale</SelectItem>
-                      <SelectItem value="fixed_payment">Fixed Failed Payment</SelectItem>
-                      <SelectItem value="carrier_requirements">Fulfilling Carrier Requirements</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <DialogFooter>
-                <Button variant="outline" type="button" onClick={() => setRetentionModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => void startRetentionWorkflow()}
-                  disabled={!retentionAgent || !retentionType || !selectedPolicyView?.policyNumber}
-                >
-                  Next
-                </Button>
-              </DialogFooter>
-            </>
-          ) : null}
-
-          {retentionStep === "carrier_alert" ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Policy Status Alert</DialogTitle>
-                <DialogDescription>
-                  This is not a pending policy. Either select a new workflow, or different policy.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => {
-                    setRetentionModalOpen(false);
-                    setRetentionStep("select");
-                  }}
-                >
-                  Select Different Policy
-                </Button>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="w-full"
-                    onClick={() => {
-                      setRetentionType("fixed_payment");
-                      setRetentionStep("banking_form");
-                    }}
-                  >
-                    Switch to Fixing Failed Payment
-                  </Button>
-
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="w-full"
-                    onClick={() => {
-                      setRetentionType("new_sale");
-                      setRetentionStep("select");
-                    }}
-                  >
-                    Switch to New Sale
-                  </Button>
-                </div>
-
-                <Button type="button" className="w-full" onClick={() => void goToCallUpdate()}>
-                  Update Call Result
-                </Button>
-              </div>
-            </>
-          ) : null}
-
-          {retentionStep === "banking_form" ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Banking Information</DialogTitle>
-                <DialogDescription>Add banking details and save.</DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-6">
-                <div className="space-y-3">
-                  <Label>Policy Status</Label>
-                  <div className="flex flex-col gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setBankingPolicyStatus("issued")}
-                      className={
-                        "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors " +
-                        (bankingPolicyStatus === "issued"
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-background text-foreground hover:bg-muted/50")
-                      }
-                    >
-                      <span className="inline-block h-3 w-3 rounded-full border border-primary">
-                        {bankingPolicyStatus === "issued" ? (
-                          <span className="block h-2 w-2 rounded-full bg-primary m-px" />
-                        ) : null}
-                      </span>
-                      <span>Policy has been issued</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBankingPolicyStatus("pending")}
-                      className={
-                        "inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors " +
-                        (bankingPolicyStatus === "pending"
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-background text-foreground hover:bg-muted/50")
-                      }
-                    >
-                      <span className="inline-block h-3 w-3 rounded-full border border-primary">
-                        {bankingPolicyStatus === "pending" ? (
-                          <span className="block h-2 w-2 rounded-full bg-primary m-px" />
-                        ) : null}
-                      </span>
-                      <span>Policy is pending (lead is in pending manual action on GHL)</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Account Holder Name</Label>
-                    <Input value={bankingAccountHolderName} onChange={(e) => setBankingAccountHolderName(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Bank Name</Label>
-                    <Input value={bankingBankName} onChange={(e) => setBankingBankName(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Routing Number</Label>
-                    <Input value={bankingRoutingNumber} onChange={(e) => setBankingRoutingNumber(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Account Number</Label>
-                    <Input value={bankingAccountNumber} onChange={(e) => setBankingAccountNumber(e.target.value)} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Account Type</Label>
-                    <Select
-                      value={bankingAccountType}
-                      onValueChange={(v) => {
-                        if (v === "Checking" || v === "Savings" || v === "") {
-                          setBankingAccountType(v);
-                        }
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select Type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Checking">Checking</SelectItem>
-                        <SelectItem value="Savings">Savings</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Draft Date</Label>
-                    <Input type="date" value={bankingDraftDate} onChange={(e) => setBankingDraftDate(e.target.value)} />
-                  </div>
-                </div>
-
-                {bankingSaveError ? <div className="text-sm text-red-600">{bankingSaveError}</div> : null}
-              </div>
-
-              <DialogFooter>
-                <Button variant="outline" type="button" onClick={() => setRetentionStep("select")}>Back</Button>
-                <Button
-                  type="button"
-                  disabled={
-                    bankingSaving ||
-                    !bankingAccountHolderName ||
-                    !bankingBankName ||
-                    !bankingRoutingNumber ||
-                    !bankingAccountNumber ||
-                    !bankingAccountType ||
-                    !bankingDraftDate
-                  }
-                  onClick={() => {
-                    const run = async () => {
-                      await saveBankingInfoToMondayNotes();
-                      await goToCallUpdate();
-                    };
-                    void run();
-                  }}
-                >
-                  {bankingSaving ? "Saving..." : "Save and Continue"}
-                </Button>
-              </DialogFooter>
-            </>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

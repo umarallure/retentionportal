@@ -436,11 +436,40 @@ export default function ManagerAssignLeadPage() {
     if (!activeLead || !selectedAgentId) return;
     if (originalAgentId && selectedAgentId === originalAgentId) return;
 
+    const findDuplicateDealIdsForLead = async (): Promise<number[]> => {
+      const phone = (activeLead.phone_number ?? "").toString().trim();
+      const name = (activeLead.display_name ?? "").toString().trim();
+
+      if (!phone && !name) return [];
+
+      let q = supabase
+        .from("monday_com_deals")
+        .select("id")
+        .not("monday_item_id", "is", null)
+        .limit(5000);
+
+      if (phone) {
+        q = q.eq("phone_number", phone);
+      } else {
+        const escaped = name.replace(/,/g, "");
+        q = q.or(`ghl_name.ilike.%${escaped}%,deal_name.ilike.%${escaped}%`);
+      }
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      const ids = (data ?? [])
+        .map((r) => (typeof (r as { id?: unknown })?.id === "number" ? ((r as { id: number }).id as number) : null))
+        .filter((v): v is number => v != null);
+
+      return ids.filter((id) => id !== (activeLead.deal_id ?? null));
+    };
+
     setSaving(true);
     try {
       // Prefer assignment by deal_id (new schema). If we have a deal_id use it, otherwise
       // fallback to assigning by lead_id if the table still supports it (not expected).
-      let existingAssignment: any = null;
+      let existingAssignment: { id: number | string } | null = null;
 
       if (activeLead.deal_id) {
         const { data, error } = await supabase
@@ -492,6 +521,69 @@ export default function ManagerAssignLeadPage() {
 
       if (mutationError) throw mutationError;
 
+      // Auto-assign duplicates (same client, different policies) to the same agent.
+      // We avoid stealing duplicates already assigned to a different active agent.
+      let autoAssigned = 0;
+      let alreadyAssignedToOther = 0;
+
+      if (activeLead.deal_id) {
+        const duplicateDealIds = await findDuplicateDealIdsForLead();
+        if (duplicateDealIds.length) {
+          const { data: existingRows, error: existingErr } = await supabase
+            .from("retention_assigned_leads")
+            .select("id, deal_id, assignee_profile_id, status")
+            .in("deal_id", duplicateDealIds)
+            .limit(10000);
+
+          if (existingErr) throw existingErr;
+
+          const existingByDealId = new Map<number, { id: string; assignee_profile_id: string; status: string }>();
+          for (const r of (existingRows ?? []) as Array<Record<string, unknown>>) {
+            const dealId = typeof r.deal_id === "number" ? (r.deal_id as number) : null;
+            const id = typeof r.id === "string" ? (r.id as string) : null;
+            const assignee = typeof r.assignee_profile_id === "string" ? (r.assignee_profile_id as string) : null;
+            const status = typeof r.status === "string" ? (r.status as string) : "";
+            if (dealId != null && id && assignee) existingByDealId.set(dealId, { id, assignee_profile_id: assignee, status });
+          }
+
+          const now = new Date().toISOString();
+
+          for (const dealId of duplicateDealIds) {
+            const existing = existingByDealId.get(dealId) ?? null;
+
+            if (existing && existing.status === "active" && existing.assignee_profile_id !== selectedAgentId) {
+              alreadyAssignedToOther += 1;
+              continue;
+            }
+
+            if (existing) {
+              if (existing.assignee_profile_id === selectedAgentId && existing.status === "active") continue;
+              const { error } = await supabase
+                .from("retention_assigned_leads")
+                .update({
+                  assignee_profile_id: selectedAgentId,
+                  assigned_by_profile_id: selectedAgentId,
+                  status: "active",
+                  assigned_at: now,
+                })
+                .eq("id", existing.id);
+              if (error) throw error;
+              autoAssigned += 1;
+            } else {
+              const { error } = await supabase.from("retention_assigned_leads").insert({
+                deal_id: dealId,
+                assignee_profile_id: selectedAgentId,
+                assigned_by_profile_id: selectedAgentId,
+                status: "active",
+                assigned_at: now,
+              });
+              if (error) throw error;
+              autoAssigned += 1;
+            }
+          }
+        }
+      }
+
       // Refresh assignments by deal_id for current page
       const dealIds = rows.map((r) => r.deal_id).filter((v): v is number => !!v);
       const { data: refreshedAssignments, error: refreshedError } = await supabase
@@ -530,7 +622,11 @@ export default function ManagerAssignLeadPage() {
         title: "Lead assigned",
         description:
           assignedAgent && activeLead.display_name
-            ? `${activeLead.display_name} assigned to ${assignedAgent.display_name ?? "agent"}`
+            ? `${activeLead.display_name} assigned to ${assignedAgent.display_name ?? "agent"}` +
+              (autoAssigned || alreadyAssignedToOther
+                ? ` • Auto-assigned ${autoAssigned} duplicate policy(s)` +
+                  (alreadyAssignedToOther ? ` (skipped ${alreadyAssignedToOther} already assigned)` : "")
+                : "")
             : "Lead assignment saved.",
       });
 
@@ -572,15 +668,6 @@ export default function ManagerAssignLeadPage() {
 
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Assign Leads</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            View all leads and assign each one to a retention agent.
-          </p>
-        </div>
-      </div>
-
       <div className="mx-auto">
         <Card>
           <CardHeader>

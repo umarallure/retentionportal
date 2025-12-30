@@ -146,7 +146,7 @@ export default function CallUpdatePage() {
 
   return (
     <div className="w-full px-4 md:px-8 lg:px-10 py-6 min-h-screen bg-muted/15">
-      <div className="flex flex-col gap-3 mb-6">
+      <div className="flex flex-col gap-3 mb-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2">
             ← Back to Dashboard
@@ -160,13 +160,6 @@ export default function CallUpdatePage() {
               Just Started
             </Badge>
           </div>
-        </div>
-
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Update Call Result</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Update the status and details for this lead.
-          </p>
         </div>
       </div>
 

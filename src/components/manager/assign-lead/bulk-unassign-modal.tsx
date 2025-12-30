@@ -97,60 +97,109 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
   }, [open]);
 
   const loadAssigned = React.useCallback(async () => {
-    if (!selectedStages || selectedStages.length === 0) {
-      setGroupCount(null);
-      setAssignedRows([]);
-      return;
-    }
-
     setLoading(true);
     try {
-      const dealsQuery = supabase
-        .from("monday_com_deals")
-        .select("id,monday_item_id", { count: "exact" })
-        .in("ghl_stage", selectedStages)
-        .not("monday_item_id", "is", null)
-        .order("last_updated", { ascending: false, nullsFirst: false });
+      // If no stages selected:
+      // - If agent is "all": nothing to show
+      // - If a specific agent is selected: show all active assigned leads for that agent (any stage)
+      if (!selectedStages || selectedStages.length === 0) {
+        if (agentId === "all") {
+          setGroupCount(null);
+          setAssignedRows([]);
+          return;
+        }
 
-      const { data: dealRows, error: dealsError, count } = await dealsQuery.limit(2000);
-      if (dealsError) throw dealsError;
-      setGroupCount(count ?? null);
+        const PAGE_SIZE = 1000;
+        let offset = 0;
+        let countSet = false;
+        const all: AssignmentRow[] = [];
 
-      const submissionIds = Array.from(
-        new Set(
-          ((dealRows ?? []) as DealRow[])
-            .map((d) => (typeof d.monday_item_id === "string" ? d.monday_item_id.trim() : ""))
-            .filter((v) => v.length > 0),
-        ),
-      );
+        while (true) {
+          const q = supabase
+            .from("retention_assigned_leads")
+            .select("id, deal_id, assignee_profile_id", { count: "exact" })
+            .eq("status", "active")
+            .eq("assignee_profile_id", agentId)
+            .order("assigned_at", { ascending: false, nullsFirst: false })
+            .range(offset, offset + PAGE_SIZE - 1);
 
-      if (submissionIds.length === 0) {
-        setAssignedRows([]);
+          const { data, error, count } = await q;
+          if (error) throw error;
+          if (!countSet) {
+            setGroupCount(count ?? null);
+            countSet = true;
+          }
+
+          const rows = (data ?? []) as AssignmentRow[];
+          all.push(...rows);
+          if (rows.length < PAGE_SIZE) break;
+          offset += PAGE_SIZE;
+          if (offset > 50000) break;
+        }
+
+        setAssignedRows(all);
         return;
       }
 
-      const dealIds = Array.from(new Set(((dealRows ?? []) as DealRow[]).map((d) => d.id).filter((v): v is number => !!v)));
+      // Stages selected: load deal ids for stages (paginate), then load assigned rows for those deals.
+      const PAGE_SIZE = 1000;
+      let offset = 0;
+      let countSet = false;
+      const allDeals: DealRow[] = [];
+
+      while (true) {
+        const dealsQuery = supabase
+          .from("monday_com_deals")
+          .select("id,monday_item_id", { count: "exact" })
+          .in("ghl_stage", selectedStages)
+          .order("last_updated", { ascending: false, nullsFirst: false })
+          .range(offset, offset + PAGE_SIZE - 1);
+
+        const { data: dealRows, error: dealsError, count } = await dealsQuery;
+        if (dealsError) throw dealsError;
+        if (!countSet) {
+          setGroupCount(count ?? null);
+          countSet = true;
+        }
+
+        const rows = (dealRows ?? []) as DealRow[];
+        allDeals.push(...rows);
+        if (rows.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
+        if (offset > 100000) break;
+      }
+
+      const dealIds = Array.from(
+        new Set(allDeals.map((d) => d.id).filter((v): v is number => typeof v === "number" && Number.isFinite(v))),
+      );
 
       if (dealIds.length === 0) {
         setAssignedRows([]);
         return;
       }
 
-      let assignmentsQuery = supabase
-        .from("retention_assigned_leads")
-        .select("id, deal_id, assignee_profile_id")
-        .in("deal_id", dealIds)
-        .eq("status", "active")
-        .limit(10000);
+      const CHUNK = 1000;
+      const allAssignments: AssignmentRow[] = [];
 
-      if (agentId !== "all") {
-        assignmentsQuery = assignmentsQuery.eq("assignee_profile_id", agentId);
+      for (let i = 0; i < dealIds.length; i += CHUNK) {
+        const slice = dealIds.slice(i, i + CHUNK);
+        let assignmentsQuery = supabase
+          .from("retention_assigned_leads")
+          .select("id, deal_id, assignee_profile_id")
+          .in("deal_id", slice)
+          .eq("status", "active")
+          .limit(10000);
+
+        if (agentId !== "all") {
+          assignmentsQuery = assignmentsQuery.eq("assignee_profile_id", agentId);
+        }
+
+        const { data: rows, error: assignmentsError } = await assignmentsQuery;
+        if (assignmentsError) throw assignmentsError;
+        allAssignments.push(...((rows ?? []) as AssignmentRow[]));
       }
 
-      const { data: rows, error: assignmentsError } = await assignmentsQuery;
-      if (assignmentsError) throw assignmentsError;
-
-      setAssignedRows((rows ?? []) as AssignmentRow[]);
+      setAssignedRows(allAssignments);
     } catch (e) {
       console.error("[bulk-unassign] loadAssigned error", e);
       toastRef.current({
@@ -170,7 +219,11 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
     void loadAssigned();
   }, [open, selectedStages, agentId, loadAssigned]);
 
-  const canUnassign = selectedStages.length > 0 && assignedRows.length > 0 && !loading && !deleting;
+  const canUnassign =
+    assignedRows.length > 0 &&
+    !loading &&
+    !deleting &&
+    (selectedStages.length > 0 || agentId !== "all");
 
   const bulkUnassign = async () => {
     if (!canUnassign) return;
@@ -232,7 +285,13 @@ export function BulkUnassignModal(props: BulkUnassignModalProps) {
                         </Button>
                       </div>
                     </div>
-                    <div className="max-h-64 overflow-auto">
+                    <div
+                      className="max-h-64 overflow-auto"
+                      onWheel={(e) => {
+                        // Prevent Dialog scroll-lock from eating wheel events.
+                        e.stopPropagation();
+                      }}
+                    >
                       {loadingStages ? (
                         <div className="flex items-center justify-center p-4">
                           <Loader2 className="h-4 w-4 animate-spin" />

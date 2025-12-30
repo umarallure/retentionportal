@@ -11,38 +11,65 @@ export type GhlStageOption = {
  */
 export async function getGhlStages(): Promise<GhlStageOption[]> {
   try {
-    // Fetch distinct stage values (sample up to 1000 rows)
-    const { data: rows, error: rowsError } = await supabase
-      .from("monday_com_deals")
-      .select("ghl_stage", { count: "exact" })
-      .not("ghl_stage", "is", null)
-      .limit(1000);
+    const stageSet = new Set<string>();
+    const PAGE_SIZE = 1000;
+    let offset = 0;
+    let pagesWithoutNew = 0;
 
-    if (rowsError) throw rowsError;
-
-    const s = new Set<string>();
-    for (const r of (rows ?? []) as Array<{ ghl_stage?: string | null }>) {
-      if (r.ghl_stage) s.add(r.ghl_stage);
-    }
-
-    const stages = Array.from(s);
-
-    // For each stage, fetch a count (exact) using a per-stage query.
-    const out: GhlStageOption[] = [];
-    for (const stage of stages) {
-      const { count, error } = await supabase
+    while (true) {
+      const { data: rows, error: rowsError } = await supabase
         .from("monday_com_deals")
-        .select("id", { count: "exact" })
-        .eq("ghl_stage", stage)
-        .limit(1);
+        .select("ghl_stage")
+        .not("ghl_stage", "is", null)
+        .range(offset, offset + PAGE_SIZE - 1);
 
-      if (error) {
-        // If a per-stage count fails, skip it
-        console.error("[getGhlStages] count error for stage", stage, error);
-        continue;
+      if (rowsError) throw rowsError;
+
+      const before = stageSet.size;
+      for (const r of (rows ?? []) as Array<{ ghl_stage?: string | null }>) {
+        const stage = typeof r?.ghl_stage === "string" ? r.ghl_stage.trim() : "";
+        if (stage.length) stageSet.add(stage);
+      }
+      const after = stageSet.size;
+
+      const batch = (rows ?? []) as Array<{ ghl_stage?: string | null }>;
+      if (batch.length < PAGE_SIZE) break;
+
+      if (after === before) {
+        pagesWithoutNew += 1;
+      } else {
+        pagesWithoutNew = 0;
       }
 
-      out.push({ stage, count: count ?? 0 });
+      // If we've scanned several pages without finding a new stage, stop.
+      // (Stages are low-cardinality; this prevents scanning the entire table.)
+      if (pagesWithoutNew >= 5) break;
+
+      offset += PAGE_SIZE;
+      if (offset > 200000) break;
+    }
+
+    const stages = Array.from(stageSet.values());
+
+    // 2) Fetch exact counts per stage using `head: true` (no row payload returned).
+    // Concurrency-limited to avoid flooding the network.
+    const CONCURRENCY = 5;
+    const out: GhlStageOption[] = [];
+
+    for (let i = 0; i < stages.length; i += CONCURRENCY) {
+      const slice = stages.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        slice.map(async (stage) => {
+          const { count, error } = await supabase
+            .from("monday_com_deals")
+            .select("id", { count: "exact", head: true })
+            .eq("ghl_stage", stage);
+
+          if (error) throw error;
+          return { stage, count: count ?? 0 } as GhlStageOption;
+        }),
+      );
+      out.push(...results);
     }
 
     // Sort descending by count

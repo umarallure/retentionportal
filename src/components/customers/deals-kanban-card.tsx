@@ -18,22 +18,6 @@ export type DealsKanbanRow = {
   deal_name: string | null;
 };
 
-function statusBadge(status: string | null) {
-  const s = (status ?? "").toLowerCase();
-  const cls =
-    s === "won" || s === "closed" || s === "issued" || s === "approved"
-      ? "bg-green-500/10 text-green-600 border-green-500/20"
-      : s === "lost" || s === "canceled" || s === "inactive"
-        ? "bg-red-500/10 text-red-600 border-red-500/20"
-        : "bg-amber-500/10 text-amber-600 border-amber-500/20";
-
-  return (
-    <Badge variant="outline" className={`font-medium inline-flex max-w-[220px] overflow-hidden ${cls}`}>
-      <span className="truncate">{status ?? "—"}</span>
-    </Badge>
-  );
-}
-
 export function DealsKanbanCard({ deal }: { deal: DealsKanbanRow }) {
   const router = useRouter();
 
@@ -44,29 +28,21 @@ export function DealsKanbanCard({ deal }: { deal: DealsKanbanRow }) {
   return (
     <button
       type="button"
-      className="text-left rounded-xl border bg-card p-3 shadow-sm transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full h-[172px] flex flex-col"
+      className="text-left rounded-xl border bg-card p-3 shadow-sm transition-colors hover:bg-muted/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full h-[140px] flex flex-col"
       onClick={() => {
         void router.push(href);
       }}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-foreground truncate" title={deal.policy_number ?? undefined}>
-            {deal.policy_number ?? "—"}
-          </div>
-          <div className="text-xs text-muted-foreground truncate" title={deal.carrier ?? undefined}>
-            {deal.carrier ?? "—"}
-          </div>
+      <div className="min-w-0">
+        <div
+          className="text-sm font-semibold text-foreground truncate"
+          title={(deal.ghl_name ?? deal.deal_name ?? undefined) as string | undefined}
+        >
+          {deal.ghl_name ?? deal.deal_name ?? "—"}
         </div>
-        <div className="shrink-0">{statusBadge(deal.policy_status)}</div>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-        <div className="text-muted-foreground">GHL Name</div>
-        <div className="font-medium text-foreground text-right truncate" title={deal.ghl_name ?? undefined}>
-          {deal.ghl_name ?? "—"}
-        </div>
-
         <div className="text-muted-foreground">Phone</div>
         <div className="font-medium text-foreground text-right tabular-nums truncate" title={deal.phone_number ?? undefined}>
           {deal.phone_number ?? "—"}

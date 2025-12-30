@@ -4,8 +4,6 @@ import React from "react";
 
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
@@ -22,7 +20,6 @@ import {
 } from "./bulk-assign-allocation-row";
 import { computeEvenAllocationCounts } from "./bulk-assign-utils";
 import {
-  buildLeadIdPlan,
   buildDealIdPlan,
   computeAllocationCounts,
   isValidPercentTotal,
@@ -42,40 +39,12 @@ type DealRow = {
   monday_item_id: string | null;
 };
 
-type LeadRow = {
-  id: string;
-  submission_id: string | null;
+type DealIdentityRow = {
+  id: number;
+  phone_number: string | null;
+  ghl_name: string | null;
+  deal_name: string | null;
 };
-
-async function ensureLeadBySubmissionId(args: {
-  submissionId: string;
-}): Promise<string | null> {
-  const { submissionId } = args;
-
-  const { data: existing, error: existingError } = await supabase
-    .from("leads")
-    .select("id")
-    .eq("submission_id", submissionId)
-    .limit(1)
-    .maybeSingle();
-
-  if (existingError) throw existingError;
-  if (existing?.id) return existing.id as string;
-
-  const payload: Record<string, unknown> = {
-    submission_id: submissionId,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { data: inserted, error: insertError } = await supabase
-    .from("leads")
-    .insert(payload)
-    .select("id")
-    .single();
-
-  if (insertError) throw insertError;
-  return inserted?.id ? (inserted.id as string) : null;
-}
 
 export function BulkAssignModal(props: BulkAssignModalProps) {
   const { toast } = useToast();
@@ -85,8 +54,6 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
   React.useEffect(() => {
     toastRef.current = toast;
   }, [toast]);
-
-  const [groupTitle, setGroupTitle] = React.useState<string>("");
 
   const [stages, setStages] = React.useState<GhlStageOption[]>([]);
   const [loadingStages, setLoadingStages] = React.useState(false);
@@ -140,7 +107,6 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
     !saving;
 
   const reset = React.useCallback(() => {
-    setGroupTitle("");
     setGroupCount(null);
     setAssignedCount(0);
     setUnassignedDealIds([]);
@@ -165,21 +131,39 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
 
     setLoadingGroup(true);
     try {
-      let dealsQuery = supabase
-        .from("monday_com_deals")
-        .select("id, monday_item_id", { count: "exact" })
-        .in("ghl_stage", selectedStages)
-        .not("monday_item_id", "is", null)
-        .order("last_updated", { ascending: false, nullsFirst: false });
+      const PAGE_SIZE = 1000;
+      let offset = 0;
+      let countSet = false;
+      const allRows: DealRow[] = [];
 
-      const { data: dealRows, error: dealsError, count } = await dealsQuery.limit(2000);
-      if (dealsError) throw dealsError;
+      while (true) {
+        const dealsQuery = supabase
+          .from("monday_com_deals")
+          .select("id, monday_item_id", { count: "exact" })
+          .in("ghl_stage", selectedStages)
+          .not("monday_item_id", "is", null)
+          .order("last_updated", { ascending: false, nullsFirst: false })
+          .range(offset, offset + PAGE_SIZE - 1);
 
-      setGroupCount(count ?? null);
+        const { data: dealRows, error: dealsError, count } = await dealsQuery;
+        if (dealsError) throw dealsError;
 
-      const dealIds = Array.from(
-        new Set(((dealRows ?? []) as DealRow[]).map((d) => d.id).filter((v): v is number => !!v)),
-      );
+        if (!countSet) {
+          setGroupCount(count ?? null);
+          countSet = true;
+        }
+
+        const rows = (dealRows ?? []) as DealRow[];
+        allRows.push(...rows);
+
+        if (rows.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
+
+        // Safety valve: avoid runaway loops if range isn't respected.
+        if (offset > 100000) break;
+      }
+
+      const dealIds = Array.from(new Set(allRows.map((d) => d.id).filter((v): v is number => !!v)));
 
       if (dealIds.length === 0) {
         setAssignedCount(0);
@@ -190,17 +174,25 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
       // We use deal ids for bulk assignment now (assignment table references deal_id)
       const dealIdsList: number[] = dealIds;
 
-      // Check which deals are already assigned
-      const { data: assignedRows, error: assignedError } = await supabase
-        .from("retention_assigned_leads")
-        .select("deal_id")
-        .in("deal_id", dealIdsList)
-        .eq("status", "active")
-        .limit(10000);
+      // Check which deals are already assigned (chunk to avoid query-size limits)
+      const assignedSet = new Set<number>();
+      const CHUNK = 1000;
+      for (let i = 0; i < dealIdsList.length; i += CHUNK) {
+        const slice = dealIdsList.slice(i, i + CHUNK);
+        const { data: assignedRows, error: assignedError } = await supabase
+          .from("retention_assigned_leads")
+          .select("deal_id")
+          .in("deal_id", slice)
+          .eq("status", "active")
+          .limit(10000);
 
-      if (assignedError) throw assignedError;
+        if (assignedError) throw assignedError;
 
-      const assignedSet = new Set<number>((assignedRows ?? []).map((r) => r.deal_id as number));
+        for (const r of (assignedRows ?? []) as Array<{ deal_id?: unknown }>) {
+          const id = typeof r?.deal_id === "number" ? (r.deal_id as number) : null;
+          if (id != null) assignedSet.add(id);
+        }
+      }
       setAssignedCount(assignedSet.size);
       setUnassignedDealIds(dealIdsList.filter((id) => !assignedSet.has(id)));
     } catch (e) {
@@ -287,17 +279,186 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
     return out;
   };
 
+  const normalizeName = (name: string) => name.trim().replace(/\s+/g, " ");
+
+  const computeDuplicateKey = React.useCallback((deal: DealIdentityRow | null): string | null => {
+    if (!deal) return null;
+    const phone = (deal.phone_number ?? "").toString().trim();
+    if (phone) return `phone:${phone}`;
+    const nameRaw = (deal.ghl_name ?? deal.deal_name ?? "").toString();
+    const name = normalizeName(nameRaw);
+    if (name) return `name:${name.toLowerCase()}`;
+    return null;
+  }, []);
+
   const assignBulk = async () => {
     if (!canAssign) return;
 
     setSaving(true);
     setAssigning(true);
     try {
-      const plan = buildDealIdPlan(unassignedDealIds, cleanedAllocations, evenDistribution);
-      if (plan.length === 0) {
+      const basePlan = buildDealIdPlan(unassignedDealIds, cleanedAllocations, evenDistribution);
+      if (basePlan.length === 0) {
         toast({
           title: "Nothing to assign",
           description: "No deals were selected for bulk assignment.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Option 3 (first-seen wins): for any duplicate client, whichever agent gets the first policy
+      // in the bulk plan becomes the winner; all other policies for that client (even outside selected stages)
+      // are assigned to that winner.
+      const baseDealIds = Array.from(new Set(basePlan.map((p) => p.deal_id)));
+
+      const { data: identityRows, error: identityErr } = await supabase
+        .from("monday_com_deals")
+        .select("id, phone_number, ghl_name, deal_name")
+        .in("id", baseDealIds)
+        .limit(10000);
+
+      if (identityErr) throw identityErr;
+
+      const identityById = new Map<number, DealIdentityRow>();
+      for (const r of (identityRows ?? []) as DealIdentityRow[]) {
+        if (typeof r?.id === "number") identityById.set(r.id, r);
+      }
+
+      // Prefetch all duplicate deal ids by phone in one request to avoid N-per-client queries.
+      const phones = Array.from(
+        new Set(
+          Array.from(identityById.values())
+            .map((r) => (r?.phone_number ?? "").toString().trim())
+            .filter((v) => v.length > 0),
+        ),
+      );
+
+      const phoneToDealIds = new Map<string, number[]>();
+      if (phones.length) {
+        const { data: phoneDupRows, error: phoneDupErr } = await supabase
+          .from("monday_com_deals")
+          .select("id, phone_number")
+          .not("monday_item_id", "is", null)
+          .in("phone_number", phones)
+          .limit(10000);
+
+        if (phoneDupErr) throw phoneDupErr;
+
+        for (const row of (phoneDupRows ?? []) as Array<{ id?: unknown; phone_number?: unknown }>) {
+          const id = typeof row?.id === "number" ? (row.id as number) : null;
+          const phone = typeof row?.phone_number === "string" ? row.phone_number.trim() : "";
+          if (!id || !phone) continue;
+          const existing = phoneToDealIds.get(phone) ?? [];
+          existing.push(id);
+          phoneToDealIds.set(phone, existing);
+        }
+      }
+
+      const winnerAgentByKey = new Map<string, string>();
+      const duplicateDealIdsByKey = new Map<string, number[]>();
+
+      const getAllDealIdsForKey = async (key: string): Promise<number[]> => {
+        const existing = duplicateDealIdsByKey.get(key);
+        if (existing) return existing;
+
+        if (key.startsWith("phone:")) {
+          const phone = key.slice("phone:".length);
+          const ids = (phoneToDealIds.get(phone) ?? []).filter((v): v is number => typeof v === "number");
+          duplicateDealIdsByKey.set(key, ids);
+          return ids;
+        }
+
+        if (key.startsWith("name:")) {
+          const name = key.slice("name:".length);
+          const escaped = name.replace(/,/g, "");
+          const { data, error } = await supabase
+            .from("monday_com_deals")
+            .select("id")
+            .not("monday_item_id", "is", null)
+            .or(`ghl_name.ilike.%${escaped}%,deal_name.ilike.%${escaped}%`)
+            .limit(10000);
+          if (error) throw error;
+          const ids = (data ?? [])
+            .map((d) => (typeof (d as { id?: unknown })?.id === "number" ? ((d as { id: number }).id as number) : null))
+            .filter((v): v is number => v != null);
+          duplicateDealIdsByKey.set(key, ids);
+          return ids;
+        }
+
+        duplicateDealIdsByKey.set(key, []);
+        return [];
+      };
+
+      const finalAssignments = new Map<number, string>();
+
+      for (const p of basePlan) {
+        const dealIdentity = identityById.get(p.deal_id) ?? null;
+        const key = computeDuplicateKey(dealIdentity);
+
+        if (!key) {
+          finalAssignments.set(p.deal_id, p.assignee_profile_id);
+          continue;
+        }
+
+        const winner = winnerAgentByKey.get(key) ?? p.assignee_profile_id;
+        if (!winnerAgentByKey.has(key)) winnerAgentByKey.set(key, winner);
+
+        // Ensure this planned deal goes to the winner agent.
+        finalAssignments.set(p.deal_id, winner);
+
+        // Also include all other deals for this key (same client) to the same winner.
+        const allIdsForKey = await getAllDealIdsForKey(key);
+        for (const id of allIdsForKey) {
+          if (!finalAssignments.has(id)) finalAssignments.set(id, winner);
+        }
+      }
+
+      const finalDealIds = Array.from(finalAssignments.keys());
+
+      const { data: existingAssignedRows, error: existingAssignedErr } = await supabase
+        .from("retention_assigned_leads")
+        .select("deal_id, assignee_profile_id, status")
+        .in("deal_id", finalDealIds)
+        .limit(10000);
+      if (existingAssignedErr) throw existingAssignedErr;
+
+      const existingActiveByDealId = new Map<number, { assignee_profile_id: string; status: string }>();
+      for (const r of (existingAssignedRows ?? []) as Array<Record<string, unknown>>) {
+        const dealId = typeof r.deal_id === "number" ? (r.deal_id as number) : null;
+        const assignee = typeof r.assignee_profile_id === "string" ? (r.assignee_profile_id as string) : null;
+        const status = typeof r.status === "string" ? (r.status as string) : "";
+        if (dealId != null && assignee) existingActiveByDealId.set(dealId, { assignee_profile_id: assignee, status });
+      }
+
+      // Build final insert plan, skipping conflicts with already-active assignments.
+      let skippedAlreadyAssignedToOther = 0;
+      const plan = finalDealIds
+        .map((dealId) => {
+          const desiredAssignee = finalAssignments.get(dealId) ?? null;
+          if (!desiredAssignee) return null;
+
+          const existing = existingActiveByDealId.get(dealId) ?? null;
+          if (existing && existing.status === "active" && existing.assignee_profile_id !== desiredAssignee) {
+            skippedAlreadyAssignedToOther += 1;
+            return null;
+          }
+
+          if (existing && existing.status === "active" && existing.assignee_profile_id === desiredAssignee) {
+            // already correctly assigned
+            return null;
+          }
+
+          return { deal_id: dealId, assignee_profile_id: desiredAssignee };
+        })
+        .filter((v): v is { deal_id: number; assignee_profile_id: string } => !!v);
+
+      if (plan.length === 0) {
+        toast({
+          title: "Nothing to assign",
+          description: skippedAlreadyAssignedToOther
+            ? `All matching policies are already assigned (skipped ${skippedAlreadyAssignedToOther} assigned to other agent(s)).`
+            : "All matching policies are already assigned.",
           variant: "destructive",
         });
         return;
@@ -351,7 +512,12 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
 
       toast({
         title: "Bulk assignment complete",
-        description: `Assigned ${assignedSoFar} leads across ${cleanedAllocations.length} agent(s).`,
+        description:
+          `Assigned ${assignedSoFar} lead(s) across ${cleanedAllocations.length} agent(s).` +
+          (finalDealIds.length > baseDealIds.length
+            ? ` • Auto-included ${finalDealIds.length - baseDealIds.length} duplicate policy(s)`
+            : "") +
+          (skippedAlreadyAssignedToOther ? ` • Skipped ${skippedAlreadyAssignedToOther} already assigned` : ""),
       });
 
       // small delay for UX so user sees 100%
