@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { FilterIcon, RefreshCcw, SearchIcon } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { CATEGORY_ORDER, CATEGORY_TO_GHL_STAGES, type DealCategory } from "@/lib/monday-deal-category-tags";
 
 import { DealsKanbanColumn } from "@/components/customers/deals-kanban-column";
 import type { DealGroup } from "@/components/customers/grouped-deals-group";
@@ -16,29 +17,26 @@ const GROUPS: DealGroup[] = [
   {
     id: "failed_payment",
     title: "Failed Payment",
-    queryTitleIlike: ["%FDPF%", "%Failed Payment%"],
-    excludeStageIlike: ["%Chargeback%", "%Charged Back%"],
     color: "#bb3354",
+    queryStages: CATEGORY_TO_GHL_STAGES["Failed Payment"],
   },
   {
     id: "pending_lapse",
     title: "Pending Lapse",
-    queryStageIlike: ["%Pending Lapse%"],
     color: "#ffcb00",
+    queryStages: CATEGORY_TO_GHL_STAGES["Pending Lapse"],
   },
   {
     id: "pending_manual_action",
     title: "Pending Manual Action",
-    queryTitleIlike: ["%Pending Manual Action%", "%Manual Action%"],
-    queryStageIlike: ["%Pending Manual Action%", "%Manual Action%"],
     color: "#fdab3d",
+    queryStages: CATEGORY_TO_GHL_STAGES["Pending Manual Action"],
   },
   {
     id: "chargeback",
     title: "Chargeback",
-    queryTitleIlike: ["%Charged Back%", "%Chargeback%"],
-    queryStageIlike: ["%Chargeback%", "%Charged Back%"],
     color: "#bb3354",
+    queryStages: CATEGORY_TO_GHL_STAGES["Chargeback"],
   },
 ];
 
@@ -56,37 +54,6 @@ type DealsKanbanGroup = {
   query: DealGroup;
 };
 
-function patternToRegex(pattern: string) {
-  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = "^" + escaped.replace(/%/g, ".*") + "$";
-  return new RegExp(re, "i");
-}
-
-function stableColorFromString(s: string) {
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
-  return `hsl(${hue} 70% 45%)`;
-}
-
-function normalizeGroupTitle(t: string | null) {
-  const v = typeof t === "string" ? t.trim() : "";
-  return v.length ? v : "Unknown";
-}
-
-function colorForGroupTitle(title: string) {
-  for (const g of GROUPS) {
-    const candidates = (g.queryTitles && g.queryTitles.length > 0 ? g.queryTitles : [g.queryTitle ?? g.title]).filter(Boolean);
-    for (const t of candidates) {
-      if (t && title.toLowerCase() === String(t).toLowerCase()) return g.color;
-    }
-    for (const p of (g.queryTitleIlike ?? []).filter(Boolean)) {
-      if (patternToRegex(p).test(title)) return g.color;
-    }
-  }
-  return stableColorFromString(title);
-}
-
 type DealsKanbanViewProps = {
   onRefresh?: () => void;
   refreshLoading?: boolean;
@@ -96,20 +63,7 @@ function buildGroupQuery(group: DealGroup, search: string, page: number, pageSiz
   const from = (page - 1) * pageSize;
   const to = from + pageSize;
 
-  const titles = (group.queryTitles && group.queryTitles.length > 0 ? group.queryTitles : [group.queryTitle ?? group.title]).filter(
-    Boolean,
-  );
-  const ilikePatterns = (group.queryTitleIlike ?? []).filter(Boolean);
-
-  const stages = (group.queryStages && group.queryStages.length > 0
-    ? group.queryStages
-    : group.queryStage
-      ? [group.queryStage]
-      : []).filter(Boolean);
-
-  const stageIlikePatterns = (group.queryStageIlike ?? []).filter(Boolean);
-  const excludeTitleIlike = (group.excludeTitleIlike ?? []).filter(Boolean);
-  const excludeStageIlike = (group.excludeStageIlike ?? []).filter(Boolean);
+  const stages = (group.queryStages && group.queryStages.length > 0 ? group.queryStages : group.queryStage ? [group.queryStage] : []).filter(Boolean);
 
   let q = supabase
     .from("monday_com_deals")
@@ -120,32 +74,11 @@ function buildGroupQuery(group: DealGroup, search: string, page: number, pageSiz
     .range(from, to);
 
   const includeOr: string[] = [];
-  for (const p of ilikePatterns) includeOr.push(`group_title.ilike.${p}`);
-  for (const t of titles) includeOr.push(`group_title.eq.${t}`);
-
-  for (const p of stageIlikePatterns) includeOr.push(`ghl_stage.ilike.${p}`);
   for (const s of stages) includeOr.push(`ghl_stage.eq.${s}`);
 
-  const shouldUseOr = stageIlikePatterns.length > 0 || stages.length > 0 || ilikePatterns.length > 0;
+  const shouldUseOr = stages.length > 0;
   if (shouldUseOr) {
     q = q.or(includeOr.join(","));
-  } else if (titles.length > 0) {
-    q = q.in("group_title", titles);
-  } else {
-    // When searching, we may create an "Unknown" column for deals missing group_title.
-    // In that case, match null group_title.
-    const isUnknown = (group.title ?? "").trim().toLowerCase() === "unknown";
-    if (isUnknown) {
-      q = q.is("group_title", null);
-    }
-  }
-
-  for (const p of excludeTitleIlike) {
-    q = q.not("group_title", "ilike", p);
-  }
-
-  for (const p of excludeStageIlike) {
-    q = q.not("ghl_stage", "ilike", p);
   }
 
   const trimmed = search.trim();
@@ -163,11 +96,8 @@ export function DealsKanbanView(props: DealsKanbanViewProps) {
   const { onRefresh, refreshLoading } = props;
   const [search, setSearch] = React.useState("");
   const [groupFilter, setGroupFilter] = React.useState<string>("all");
-  const [matchingGroupTitles, setMatchingGroupTitles] = React.useState<Set<string> | null>(null);
 
   const pageSize = 25;
-  const trimmedSearch = search.trim();
-  const isSearchMode = trimmedSearch.length > 0;
   const [groupPages, setGroupPages] = React.useState<Record<string, number>>(() => {
     const m: Record<string, number> = {};
     for (const g of GROUPS) m[g.id] = 1;
@@ -195,76 +125,17 @@ export function DealsKanbanView(props: DealsKanbanViewProps) {
     });
   }, [search, groupFilter]);
 
-  React.useEffect(() => {
-    let cancelled = false;
-
-    if (!trimmedSearch) {
-      setMatchingGroupTitles(null);
-      return;
-    }
-
-    void (async () => {
-      const escaped = trimmedSearch.replace(/,/g, "");
-
-      const { data, error } = await supabase
-        .from("monday_com_deals")
-        .select("group_title")
-        .or(
-          `policy_number.ilike.%${escaped}%,phone_number.ilike.%${escaped}%,deal_name.ilike.%${escaped}%,ghl_name.ilike.%${escaped}%`,
-        )
-        .limit(5000);
-
-      if (cancelled) return;
-
-      if (error) {
-        console.error("[deals-kanban-view] search groups error", error);
-        setMatchingGroupTitles(new Set());
-        return;
-      }
-
-      const titles = new Set<string>();
-      for (const row of (data ?? []) as Array<{ group_title: string | null }>) {
-        titles.add(normalizeGroupTitle(row.group_title));
-      }
-
-      setMatchingGroupTitles(titles);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [trimmedSearch]);
-
   const visibleGroups = React.useMemo<DealsKanbanGroup[]>(() => {
-    // Search mode: show dynamic columns based on the actual group_title values that matched.
-    if (isSearchMode) {
-      const titles = matchingGroupTitles ? Array.from(matchingGroupTitles) : [];
-      titles.sort((a, b) => a.localeCompare(b));
-
-      return titles.map((t) => {
-        const q: DealGroup = {
-          id: `gt:${t}`,
-          title: t,
-          queryTitle: t === "Unknown" ? undefined : t,
-          queryTitleIlike: t === "Unknown" ? undefined : undefined,
-          color: colorForGroupTitle(t),
-        };
-
-        return {
-          id: q.id,
-          title: q.title,
-          color: q.color,
-          query: q,
-        };
-      });
-    }
-
-    // Normal mode: the original four groups.
     let groups: DealsKanbanGroup[] = GROUPS.map((g) => ({ id: g.id, title: g.title, color: g.color, query: g }));
+    groups.sort((a, b) => {
+      const ia = CATEGORY_ORDER.indexOf(a.title as DealCategory);
+      const ib = CATEGORY_ORDER.indexOf(b.title as DealCategory);
+      return ia - ib;
+    });
     if (groupFilter === "all") return groups;
     groups = groups.filter((g) => g.id === groupFilter);
     return groups;
-  }, [groupFilter, isSearchMode, matchingGroupTitles]);
+  }, [groupFilter]);
 
   // Ensure pagination/state dictionaries contain keys for the visible groups.
   React.useEffect(() => {

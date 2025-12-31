@@ -235,7 +235,7 @@ export default function AssignedLeadsPage() {
 
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="max-w-6xl mx-auto">
+      <div className="w-full">
         <Card className="shadow-sm">
           <CardHeader>
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">

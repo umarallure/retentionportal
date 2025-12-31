@@ -1,5 +1,7 @@
 "use client";
 
+import * as React from "react";
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -14,8 +16,10 @@ import {
   titleizeKey,
   useAssignedLeadDetails,
 } from "@/lib/agent/assigned-lead-details.logic";
+import { useDashboard } from "@/components/dashboard-context";
 
 export default function AssignedLeadDetailsPage() {
+  const { setCurrentLeadPhone } = useDashboard();
   const {
     lead,
     dealId,
@@ -70,9 +74,15 @@ export default function AssignedLeadDetailsPage() {
     center,
   } = useAssignedLeadDetails();
 
+  React.useEffect(() => {
+    const raw = typeof personalPhone === "string" ? personalPhone.trim() : "";
+    const phone = raw && raw !== "-" ? raw : null;
+    setCurrentLeadPhone(phone);
+  }, [personalPhone, setCurrentLeadPhone]);
+
   return (
-    <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="mx-auto w-full max-w-6xl">
+    <div className="w-full px-6 py-8 min-h-screen bg-muted/20">
+      <div className="w-full">
         <Card>
           <CardHeader>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -136,7 +146,7 @@ export default function AssignedLeadDetailsPage() {
                       ) : policyCards.length === 0 ? (
                         <div className="text-sm text-muted-foreground">No policies found.</div>
                       ) : (
-                        <div className="grid gap-3">
+                        <div className="space-y-3 max-w-xl">
                           {policyViews.map((p) => {
                             const isSelected = p.key === selectedPolicyKey;
                             return (
@@ -152,73 +162,80 @@ export default function AssignedLeadDetailsPage() {
                                 role="button"
                                 tabIndex={0}
                                 className={
-                                  "text-left rounded-md border bg-background p-4 w-full transition-colors " +
-                                  (isSelected ? "ring-2 ring-primary border-primary/40" : "hover:bg-muted/30")
+                                  "text-left rounded-lg border bg-card p-4 transition-all cursor-pointer " +
+                                  (isSelected ? "ring-2 ring-primary border-primary shadow-md" : "hover:shadow-sm hover:border-muted-foreground/20")
                                 }
                               >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0">
-                                    <div className="text-sm font-semibold text-foreground truncate" title={p.clientName}>
+                                <div className="flex items-start justify-between gap-3 mb-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-base font-semibold text-foreground truncate" title={p.clientName}>
                                       {p.clientName}
                                     </div>
-                                    <div
-                                      className="text-xs text-muted-foreground truncate"
-                                      title={String(p.callCenter ?? "")}
-                                    >
+                                    <div className="text-xs text-muted-foreground truncate mt-0.5" title={String(p.callCenter ?? "")}>
                                       {p.callCenter ?? "—"}
                                     </div>
                                   </div>
-                                  <div className="text-[11px] rounded-md bg-muted px-2 py-1 font-medium text-foreground whitespace-nowrap">
+                                  <div className="text-xs rounded-md bg-muted px-2.5 py-1 font-medium text-foreground whitespace-nowrap">
                                     {p.status}
                                   </div>
                                 </div>
 
-                                <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                                  <div className="text-muted-foreground">Last Updated</div>
-                                  <div className="font-semibold text-foreground text-right">
-                                    {formatValue(p.lastUpdated)}
+                                <div className="grid grid-cols-[1fr_auto] gap-x-8 gap-y-3">
+                                  <div className="space-y-1">
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Policy #</div>
+                                    <div className="text-sm font-medium text-foreground truncate" title={p.policyNumber ?? undefined}>
+                                      {p.policyNumber ?? "—"}
+                                    </div>
                                   </div>
 
-                                  <div className="text-muted-foreground">Carrier</div>
-                                  <div className="font-semibold text-foreground text-right truncate" title={p.carrier ?? undefined}>
-                                    {p.carrier ?? "—"}
+                                  <div className="space-y-1">
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Carrier</div>
+                                    <div className="text-sm font-medium text-foreground truncate" title={p.carrier ?? undefined}>
+                                      {p.carrier ?? "—"}
+                                    </div>
                                   </div>
 
-                                  <div className="text-muted-foreground">Policy #</div>
-                                  <div
-                                    className="font-semibold text-foreground text-right truncate"
-                                    title={p.policyNumber ?? undefined}
-                                  >
-                                    {p.policyNumber ?? "—"}
+                                  <div className="space-y-1">
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Agent</div>
+                                    <div className="text-sm font-medium text-foreground truncate" title={p.agentName ?? undefined}>
+                                      {p.agentName ?? "—"}
+                                    </div>
                                   </div>
 
-                                  <div className="text-muted-foreground">Agent</div>
-                                  <div
-                                    className="font-semibold text-foreground text-right truncate"
-                                    title={p.agentName ?? undefined}
-                                  >
-                                    {p.agentName ?? "—"}
+                                  <div className="space-y-1">
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Monthly Premium</div>
+                                    <div className="text-sm font-medium text-foreground">
+                                      {formatCurrency(p.monthlyPremium)}
+                                    </div>
                                   </div>
 
-                                  <div className="text-muted-foreground">Coverage</div>
-                                  <div className="font-semibold text-foreground text-right">
-                                    {formatValue(p.coverage)}
+                                  <div className="space-y-1">
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Coverage</div>
+                                    <div className="text-sm font-medium text-foreground">
+                                      {formatValue(p.coverage)}
+                                    </div>
                                   </div>
 
-                                  <div className="text-muted-foreground">Monthly Premium</div>
-                                  <div className="font-semibold text-foreground text-right">
-                                    {formatCurrency(p.monthlyPremium)}
-                                  </div>
-
-                                  <div className="text-muted-foreground">Initial Draft Date</div>
-                                  <div className="font-semibold text-foreground text-right">
-                                    {formatValue(p.initialDraftDate)}
+                                  <div className="space-y-1">
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Initial Draft Date</div>
+                                    <div className="text-sm font-medium text-foreground">
+                                      {formatValue(p.initialDraftDate)}
+                                    </div>
                                   </div>
                                 </div>
 
-                                <div className="mt-3">
-                                  <div className="text-xs text-muted-foreground">Status notes</div>
-                                  <div className="text-sm text-foreground line-clamp-2" title={p.statusNotes ?? undefined}>
+                                <div className="mt-3 pt-3 border-t">
+                                  <div className="flex items-baseline justify-between gap-3">
+                                    <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Last Updated</div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {formatValue(p.lastUpdated)}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 pt-3 border-t">
+                                  <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Status Notes</div>
+                                  <div className="text-sm text-foreground/80 line-clamp-2" title={p.statusNotes ?? undefined}>
                                     {p.statusNotes ?? "—"}
                                   </div>
                                 </div>

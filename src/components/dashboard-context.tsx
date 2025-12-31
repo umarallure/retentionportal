@@ -11,6 +11,10 @@ type DashboardContextValue = {
   setIsCommandOpen: (open: boolean) => void;
   isNotificationsOpen: boolean;
   setIsNotificationsOpen: (open: boolean) => void;
+  currentLeadPhone: string | null;
+  setCurrentLeadPhone: (phone: string | null) => void;
+  dialerOpen: boolean;
+  setDialerOpen: (open: boolean) => void;
 };
 
 const DashboardContext = React.createContext<DashboardContextValue | null>(null);
@@ -30,6 +34,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [isCommandOpen, setIsCommandOpen] = React.useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = React.useState(false);
+  const [currentLeadPhone, setCurrentLeadPhone] = React.useState<string | null>(null);
+  const [dialerOpen, setDialerOpen] = React.useState(false);
 
   // Match Vue: close notifications on route change.
   React.useEffect(() => {
@@ -152,8 +158,12 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       setIsCommandOpen,
       isNotificationsOpen,
       setIsNotificationsOpen,
+      currentLeadPhone,
+      setCurrentLeadPhone,
+      dialerOpen,
+      setDialerOpen,
     }),
-    [isCommandOpen, isNotificationsOpen]
+    [isCommandOpen, isNotificationsOpen, currentLeadPhone, dialerOpen]
   );
 
   return <DashboardContext.Provider value={value}>{children}</DashboardContext.Provider>;

@@ -195,6 +195,70 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(500).json({ ok: false, error: "Failed to create or load verification session" });
     }
 
+    if (leadId && autofill && Object.keys(autofill).length > 0) {
+      const leadUpdatePatch: Record<string, unknown> = {};
+      
+      const fieldMappings: Record<string, string> = {
+        customer_full_name: "customer_full_name",
+        phone_number: "phone_number",
+        email: "email",
+        street_address: "street_address",
+        city: "city",
+        state: "state",
+        zip_code: "zip_code",
+        date_of_birth: "date_of_birth",
+        social_security: "social_security",
+        carrier: "carrier",
+        product_type: "product_type",
+        policy_number: "policy_number",
+        monthly_premium: "monthly_premium",
+        agent: "agent",
+        lead_vendor: "lead_vendor",
+        beneficiary_information: "beneficiary_information",
+        billing_and_mailing_address_is_the_same: "billing_and_mailing_address_is_the_same",
+        age: "age",
+        driver_license: "driver_license",
+        exp: "exp",
+        existing_coverage: "existing_coverage",
+        applied_to_life_insurance_last_two_years: "applied_to_life_insurance_last_two_years",
+        height: "height",
+        weight: "weight",
+        doctors_name: "doctors_name",
+        tobacco_use: "tobacco_use",
+        health_conditions: "health_conditions",
+        medications: "medications",
+        insurance_application_details: "insurance_application_details",
+        coverage_amount: "coverage_amount",
+        draft_date: "draft_date",
+        first_draft: "first_draft",
+        institution_name: "institution_name",
+        beneficiary_routing: "beneficiary_routing",
+        beneficiary_account: "beneficiary_account",
+        account_type: "account_type",
+        birth_state: "birth_state",
+        call_phone_landline: "call_phone_landline",
+        additional_notes: "additional_notes",
+      };
+
+      for (const [autofillKey, leadColumn] of Object.entries(fieldMappings)) {
+        const value = autofill[autofillKey];
+        if (value && typeof value === "string" && value.trim().length > 0 && value !== "—") {
+          leadUpdatePatch[leadColumn] = value.trim();
+        }
+      }
+
+      if (Object.keys(leadUpdatePatch).length > 0) {
+        const { error: leadUpdateErr } = await supabaseAdmin
+          .from("leads")
+          .update(leadUpdatePatch)
+          .eq("id", leadId);
+
+        if (leadUpdateErr) {
+          console.error("[verification-items] Failed to update lead with merged data:", leadUpdateErr);
+        }
+      }
+    }
+
     const { error: initErr } = await supabaseAdmin.rpc("retention_initialize_verification_items", {
       session_id_param: sessionId,
     });
@@ -215,18 +279,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const initial = (itemsRows ?? []) as Array<Record<string, unknown>>;
 
-    if (initial.length === 0) {
-      const fieldNames = Object.keys(autofill ?? {}).filter((k) => k.trim().length);
-      if (fieldNames.length) {
-        const inserts = fieldNames.map((fieldName) => ({
-          session_id: sessionId,
-          field_name: fieldName,
-          original_value: (autofill?.[fieldName] ?? "").toString(),
-        }));
+    if (autofill && Object.keys(autofill).length > 0) {
+      if (initial.length === 0) {
+        const fieldNames = Object.keys(autofill).filter((k) => k.trim().length);
+        if (fieldNames.length) {
+          const inserts = fieldNames.map((fieldName) => ({
+            session_id: sessionId,
+            field_name: fieldName,
+            original_value: (autofill[fieldName] ?? "").toString(),
+          }));
 
-        const { error: seedErr } = await supabaseAdmin.from("retention_verification_items").insert(inserts);
-        if (seedErr) {
-          return res.status(500).json({ ok: false, error: seedErr.message });
+          const { error: seedErr } = await supabaseAdmin.from("retention_verification_items").insert(inserts);
+          if (seedErr) {
+            console.error("[verification-items] Failed to create verification items:", seedErr);
+            return res.status(500).json({ ok: false, error: seedErr.message });
+          }
+        }
+      } else {
+        for (const item of initial) {
+          const itemId = typeof item.id === "string" ? item.id : null;
+          const fieldName = typeof item.field_name === "string" ? item.field_name : null;
+          const currentOriginal = typeof item.original_value === "string" ? item.original_value : "";
+          
+          if (!itemId || !fieldName) continue;
+          
+          const autofillValue = autofill[fieldName];
+          if (autofillValue && typeof autofillValue === "string" && autofillValue.trim().length > 0) {
+            if (!currentOriginal || currentOriginal.trim().length === 0) {
+              const { error: updateErr } = await supabaseAdmin
+                .from("retention_verification_items")
+                .update({ original_value: autofillValue })
+                .eq("id", itemId);
+              
+              if (updateErr) {
+                console.error(`[verification-items] Failed to update item ${itemId}:`, updateErr);
+              }
+            }
+          }
         }
       }
     }
@@ -241,7 +330,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(500).json({ ok: false, error: itemsErr2.message });
     }
 
-    return res.status(200).json({ ok: true, sessionId, items: (itemsRows2 ?? []) as Array<Record<string, unknown>> });
+    const finalItems = (itemsRows2 ?? []) as Array<Record<string, unknown>>;
+    return res.status(200).json({ ok: true, sessionId, items: finalItems });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load verification items";
     return res.status(500).json({ ok: false, error: msg });

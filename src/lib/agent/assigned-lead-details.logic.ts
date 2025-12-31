@@ -54,36 +54,6 @@ export function buildDigitWildcardPattern(digits: string) {
    return parts.join(" ");
  }
 
- function buildLeadVendorOrFilter(leadVendorRaw: string) {
-   const raw = leadVendorRaw.trim();
-   if (!raw.length) return null;
-
-   // Remove LIKE wildcards to avoid accidental broad matches.
-   const cleanedRaw = raw.replace(/[%_]/g, " ").replace(/\s+/g, " ").trim();
-   const normalizedCore = normalizeVendorForMatch(cleanedRaw);
-   const coreTitle = normalizedCore
-     .split(" ")
-     .map((p) => (p.length ? p[0]!.toUpperCase() + p.slice(1) : p))
-     .join(" ");
-
-   const patterns = Array.from(
-     new Set(
-       [
-         cleanedRaw,
-         cleanedRaw.toLowerCase(),
-         normalizedCore,
-         coreTitle,
-         `${normalizedCore} %`,
-         `${coreTitle} %`,
-       ]
-         .map((p) => p.trim())
-         .filter((p) => p.length)
-     )
-   );
-
-   return patterns.map((p) => `lead_vendor.ilike.${p}`).join(",");
- }
-
 export function getString(row: LeadRecord | null, key: string): string | null {
   if (!row) return null;
   const v = row[key];
@@ -152,6 +122,71 @@ export function pickRowValue(row: Record<string, unknown>, keys: string[]): unkn
   return null;
 }
 
+function mergeLeadRecords(
+  allLeads: LeadRecord[],
+  preferredVendor: string | null,
+): LeadRecord | null {
+  if (!allLeads.length) return null;
+
+  const normalizedPreferred = preferredVendor
+    ? normalizeVendorForMatch(preferredVendor.trim())
+    : null;
+
+  let exactMatch: LeadRecord | null = null;
+  const otherLeads: LeadRecord[] = [];
+
+  for (const lead of allLeads) {
+    const vendor = getString(lead, "lead_vendor");
+    if (vendor && normalizedPreferred) {
+      const normalized = normalizeVendorForMatch(vendor);
+      if (normalized === normalizedPreferred) {
+        if (!exactMatch) exactMatch = lead;
+        continue;
+      }
+    }
+    otherLeads.push(lead);
+  }
+
+  const primary = exactMatch ?? allLeads[0];
+  if (!primary) return null;
+
+  const fallbackSources = exactMatch ? otherLeads : allLeads.slice(1);
+
+  const merged: LeadRecord = { ...primary };
+
+  const fieldsToMerge = [
+    "email",
+    "street_address",
+    "city",
+    "state",
+    "zip_code",
+    "date_of_birth",
+    "social_security",
+    "carrier",
+    "product_type",
+    "policy_number",
+    "monthly_premium",
+    "agent",
+    "phone_number",
+    "customer_full_name",
+  ];
+
+  for (const field of fieldsToMerge) {
+    const primaryValue = getString(merged, field);
+    if (!primaryValue || primaryValue === "-") {
+      for (const fallback of fallbackSources) {
+        const fallbackValue = getString(fallback, field);
+        if (fallbackValue && fallbackValue !== "-") {
+          merged[field] = fallbackValue;
+          break;
+        }
+      }
+    }
+  }
+
+  return merged;
+}
+
 export function formatCurrency(value: unknown): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "number") {
@@ -181,6 +216,7 @@ export function useAssignedLeadDetails() {
 
   const [lead, setLead] = useState<LeadRecord | null>(null);
   const [personalLead, setPersonalLead] = useState<LeadRecord | null>(null);
+  const [allPersonalLeads, setAllPersonalLeads] = useState<LeadRecord[]>([]);
   const [personalLeadLoading, setPersonalLeadLoading] = useState(false);
   const [selectedDeal, setSelectedDeal] = useState<MondayComDeal | null>(null);
   const [mondayDeals, setMondayDeals] = useState<MondayComDeal[]>([]);
@@ -429,6 +465,7 @@ export function useAssignedLeadDetails() {
   useEffect(() => {
     if (selectedDeal) {
       setPersonalLead(null);
+      setAllPersonalLeads([]);
       setPersonalLeadLoading(false);
       setDuplicateResult(null);
       setDuplicateError(null);
@@ -438,6 +475,7 @@ export function useAssignedLeadDetails() {
 
     if (!lead) {
       setPersonalLead(null);
+      setAllPersonalLeads([]);
       setPersonalLeadLoading(false);
       setMondayDeals([]);
       setMondayError(null);
@@ -562,35 +600,33 @@ export function useAssignedLeadDetails() {
     const run = async () => {
       setPersonalLeadLoading(true);
       try {
-        // 1) Preferred: search leads by customer_full_name (GHL name)
         const escaped = lookupName.replace(/,/g, "").trim();
         if (!escaped.length) {
-          if (!cancelled) setPersonalLead(null);
+          if (!cancelled) {
+            setPersonalLead(null);
+            setAllPersonalLeads([]);
+          }
           return;
         }
 
-        let q = supabase
+        const q = supabase
           .from("leads")
           .select("*")
           .ilike("customer_full_name", `%${escaped}%`)
           .order("updated_at", { ascending: false })
           .order("submission_date", { ascending: false })
-          .limit(25);
-
-        if (leadVendor && leadVendor.trim().length) {
-          const vendorOr = buildLeadVendorOrFilter(leadVendor);
-          if (vendorOr) {
-            q = q.or(vendorOr);
-          }
-        }
+          .limit(50);
 
         const { data: byNameRows, error: byNameErr } = await q;
         if (byNameErr) throw byNameErr;
 
-        const byName = (byNameRows ?? []) as LeadRecord[];
-        const chosenByName = byName.length ? (byName[0] as LeadRecord) : null;
+        const allLeads = (byNameRows ?? []) as LeadRecord[];
+        const mergedLead = mergeLeadRecords(allLeads, leadVendor);
 
-        if (!cancelled) setPersonalLead(chosenByName);
+        if (!cancelled) {
+          setAllPersonalLeads(allLeads);
+          setPersonalLead(mergedLead);
+        }
       } finally {
         if (!cancelled) setPersonalLeadLoading(false);
       }
@@ -1120,6 +1156,7 @@ export function useAssignedLeadDetails() {
 
         const policyKeyForSession = policyNumber ?? fallbackPolicyKey;
 
+        const autofillData = verificationAutofillByFieldName;
         const resp = await fetch("/api/verification-items", {
           method: "POST",
           headers: {
@@ -1131,7 +1168,7 @@ export function useAssignedLeadDetails() {
             dealId: dealIdForVerification,
             policyKey: policyKeyForSession,
             callCenter: selectedPolicyView?.callCenter ?? null,
-            autofill: verificationAutofillByFieldName,
+            autofill: autofillData,
           }),
         });
 
@@ -1149,6 +1186,7 @@ export function useAssignedLeadDetails() {
         const items = (json as { ok: true; items: Array<Record<string, unknown>> }).items;
 
         if (cancelled) return;
+        
         setVerificationSessionId(sessionId);
         const rows = (items ?? []) as Array<Record<string, unknown>>;
         setVerificationItems(rows);
@@ -1189,13 +1227,23 @@ export function useAssignedLeadDetails() {
   }, [lead, personalLead, selectedDeal, selectedPolicyKey, selectedPolicyView, verificationAutofillByFieldName]);
 
   const toggleVerificationItem = async (itemId: string, checked: boolean) => {
+    const currentValue = verificationInputValues[itemId] ?? "";
+    const item = verificationItems.find((r) => r["id"] === itemId) ?? null;
+    const original = item && typeof item["original_value"] === "string" ? (item["original_value"] as string) : "";
+    const isModified = original !== currentValue;
+
     setVerificationItems((prev) =>
-      prev.map((r) => (r["id"] === itemId ? { ...r, is_verified: checked, verified_at: checked ? new Date().toISOString() : null } : r)),
+      prev.map((r) => (r["id"] === itemId ? { ...r, is_verified: checked, verified_at: checked ? new Date().toISOString() : null, verified_value: currentValue, is_modified: isModified } : r)),
     );
 
     const { error: updateErr } = await supabase
       .from("retention_verification_items")
-      .update({ is_verified: checked, verified_at: checked ? new Date().toISOString() : null })
+      .update({ 
+        is_verified: checked, 
+        verified_at: checked ? new Date().toISOString() : null,
+        verified_value: currentValue,
+        is_modified: isModified
+      })
       .eq("id", itemId);
 
     if (updateErr) throw updateErr;
@@ -1259,6 +1307,7 @@ export function useAssignedLeadDetails() {
     selectedDeal,
     lead,
     personalLead,
+    allPersonalLeads,
     personalLeadLoading,
     mondayDeals,
     mondayLoading,

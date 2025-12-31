@@ -720,9 +720,6 @@ export default function RetentionWorkflowPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10">
           <div className="lg:col-span-4">
             <Card className="border border-primary/20 shadow-sm bg-primary/5">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-lg">Lead Information</CardTitle>
-              </CardHeader>
               <CardContent className="space-y-6">
                 {leadLoading ? (
                   <div className="text-sm text-muted-foreground">Loading lead...</div>

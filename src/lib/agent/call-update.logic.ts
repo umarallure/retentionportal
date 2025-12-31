@@ -353,7 +353,9 @@ export function useCallUpdate() {
         const { data, error } = await supabase.from("leads").select("*").eq("id", leadId).maybeSingle();
 
         if (error) throw error;
-        if (!cancelled) setLead((data ?? null) as LeadRecord | null);
+        const leadData = (data ?? null) as LeadRecord | null;
+        
+        if (!cancelled) setLead(leadData);
       } catch (e) {
         if (!cancelled) {
           const msg = e instanceof Error ? e.message : "Failed to load lead.";
@@ -398,13 +400,14 @@ export function useCallUpdate() {
       setVerificationError(null);
       try {
         const leadIdLocal = lead["id"] as string;
+        const callCenterParam = callCenterFromRoute.trim().length ? callCenterFromRoute.trim() : getString(lead, "lead_vendor");
 
         const { data: sessionRow, error: sessionErr } = await supabase.rpc(
           "retention_get_or_create_verification_session",
           {
             lead_id_param: leadIdLocal,
             policy_number_param: policyNumber,
-            call_center_param: callCenterFromRoute.trim().length ? callCenterFromRoute.trim() : getString(lead, "lead_vendor"),
+            call_center_param: callCenterParam,
           },
         );
 
@@ -421,11 +424,6 @@ export function useCallUpdate() {
 
         if (sessionDbErr) throw sessionDbErr;
 
-        const { error: initErr } = await supabase.rpc("retention_initialize_verification_items", {
-          session_id_param: sessionId,
-        });
-        if (initErr) throw initErr;
-
         const { data: itemsRows, error: itemsErr } = await supabase
           .from("retention_verification_items")
           .select("*")
@@ -437,6 +435,7 @@ export function useCallUpdate() {
         if (cancelled) return;
 
         const rows = (itemsRows ?? []) as Array<Record<string, unknown>>;
+        
         setVerificationSessionId(sessionId);
         setVerificationSession(((sessionDbRow ?? null) as RetentionVerificationSessionRow | null) ?? session);
         setVerificationItems(rows);
@@ -449,6 +448,7 @@ export function useCallUpdate() {
           const ov = typeof r["original_value"] === "string" ? (r["original_value"] as string) : null;
           map[id] = (vv ?? ov ?? "").toString();
         }
+        
         setVerificationInputValues(map);
       } catch (e) {
         if (cancelled) return;
@@ -518,17 +518,27 @@ export function useCallUpdate() {
   }, [dealId, policyNumber, router.isReady]);
 
   const toggleVerificationItem = async (itemId: string, checked: boolean) => {
+    const currentValue = verificationInputValues[itemId] ?? "";
+    const item = verificationItems.find((r) => r["id"] === itemId) ?? null;
+    const original = item && typeof item["original_value"] === "string" ? (item["original_value"] as string) : "";
+    const isModified = original !== currentValue;
+
     setVerificationItems((prev) =>
       prev.map((r) =>
         r["id"] === itemId
-          ? { ...r, is_verified: checked, verified_at: checked ? new Date().toISOString() : null }
+          ? { ...r, is_verified: checked, verified_at: checked ? new Date().toISOString() : null, verified_value: currentValue, is_modified: isModified }
           : r,
       ),
     );
 
     const { error: updateErr } = await supabase
       .from("retention_verification_items")
-      .update({ is_verified: checked, verified_at: checked ? new Date().toISOString() : null })
+      .update({ 
+        is_verified: checked, 
+        verified_at: checked ? new Date().toISOString() : null,
+        verified_value: currentValue,
+        is_modified: isModified
+      })
       .eq("id", itemId);
 
     if (updateErr) throw updateErr;
