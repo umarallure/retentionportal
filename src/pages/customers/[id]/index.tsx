@@ -70,19 +70,12 @@ export default function CustomerDetailPage() {
 
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="flex items-center justify-between gap-4 mb-8">
+      <div className="flex items-center justify-between gap-4 mb-4">
         <div>
-          <Button variant="outline" size="sm" onClick={handleBack} className="mb-3">
-            1 Back to Customers
+          <Button variant="outline" size="sm" onClick={handleBack}>
+            Back to Customers
           </Button>
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
-            {deal?.deal_name ?? "Lead details"}
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Full details for this lead synchronized from your Monday.com board.
-          </p>
         </div>
-
         {deal?.policy_status && (
           <Badge variant="outline" className="px-3 py-1 text-sm">
             {deal.policy_status}

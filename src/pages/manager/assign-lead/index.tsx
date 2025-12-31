@@ -39,6 +39,7 @@ type MondayDealRow = {
 
 type AssignLeadRow = {
   monday_item_id: string;
+  deal_id: number | null;
   display_name: string | null;
   phone_number: string | null;
   vendor: string | null;
@@ -48,7 +49,8 @@ type AssignLeadRow = {
 
 type AssignmentRow = {
   id: string;
-  lead_id: string;
+  lead_id?: string | null;
+  deal_id?: number | null;
   assignee_profile_id: string;
   status: string;
   assigned_at: string;
@@ -198,33 +200,11 @@ export default function ManagerAssignLeadPage() {
         }
       }
 
-      const allLeadIdsForMondayItems = Array.from(
-        new Set(
-          Array.from(leadsBySubmissionId.values())
-            .flat()
-            .map((l) => l.id)
-            .filter((v): v is string => !!v),
-        ),
-      );
-
-      const assignedLeadIds = new Set<string>();
-      if (allLeadIdsForMondayItems.length > 0) {
-        const { data: assignedRows, error: assignedError } = await supabase
-          .from("retention_assigned_leads")
-          .select("lead_id")
-          .in("lead_id", allLeadIdsForMondayItems)
-          .eq("status", "active");
-
-        if (assignedError) throw assignedError;
-        ((assignedRows ?? []) as { lead_id: string }[]).forEach((r) => {
-          if (r.lead_id) assignedLeadIds.add(r.lead_id);
-        });
-      }
+      // NOTE: Previously we checked assigned lead ids here using `lead_id`.
+      // The assignment table now uses `deal_id`, so we'll check assignments by deal_id later after we know the deals on this page.
 
       const chooseBestLead = (candidates: LeadRow[]): LeadRow | null => {
         if (!candidates || candidates.length === 0) return null;
-        const assigned = candidates.find((c) => assignedLeadIds.has(c.id));
-        if (assigned) return assigned;
 
         const toMillis = (iso: string | null | undefined) => {
           if (!iso) return 0;
@@ -241,40 +221,48 @@ export default function ManagerAssignLeadPage() {
         );
       };
 
-      const combinedRows: AssignLeadRow[] = deals
-        .map((d) => {
-          const mondayId = typeof d.monday_item_id === "string" ? d.monday_item_id.trim() : "";
-          if (!mondayId) return null;
-          const leadCandidates = leadsBySubmissionId.get(mondayId) ?? [];
-          const lead = chooseBestLead(leadCandidates);
-          return {
+      const combinedRows: AssignLeadRow[] = deals.flatMap((d) => {
+        const mondayId = typeof d.monday_item_id === "string" ? d.monday_item_id.trim() : "";
+        if (!mondayId) return [] as AssignLeadRow[];
+        const leadCandidates = leadsBySubmissionId.get(mondayId) ?? [];
+        const lead = chooseBestLead(leadCandidates);
+        return [
+          {
             monday_item_id: mondayId,
+            deal_id: d.id ?? null,
             display_name: (d.ghl_name ?? d.deal_name) ?? null,
             phone_number: (lead?.phone_number ?? d.phone_number) ?? null,
             vendor: (lead?.lead_vendor ?? d.call_center) ?? null,
             state: lead?.state ?? null,
             lead_id: lead?.id ?? null,
-          };
-        })
-        .filter((v): v is AssignLeadRow => !!v);
+          },
+        ];
+      });
 
       setRows(combinedRows);
 
-      const leadIds = combinedRows.map((r) => r.lead_id).filter((v): v is string => !!v);
-      if (leadIds.length === 0) {
+      // Query assignments by deal_id (new schema) using the deals we just fetched
+      const dealIds = deals.map((d) => d.id).filter((v): v is number => !!v);
+      if (dealIds.length === 0) {
         setAssignments([]);
         return;
       }
 
       const { data: assignmentData, error: assignmentError } = await supabase
         .from("retention_assigned_leads")
-        .select("id, lead_id, assignee_profile_id, status, assigned_at")
-        .in("lead_id", leadIds)
+        .select("id, deal_id, assignee_profile_id, status, assigned_at")
+        .in("deal_id", dealIds)
         .eq("status", "active");
 
       if (assignmentError) throw assignmentError;
 
-      const activeAssignments: AssignmentRow[] = (assignmentData ?? []) as AssignmentRow[];
+      const activeAssignments = (assignmentData ?? []) as Array<{
+        id: string;
+        deal_id: number | null;
+        assignee_profile_id: string;
+        status: string;
+        assigned_at: string;
+      }>;
 
       if (activeAssignments.length > 0) {
         const agentIds = Array.from(new Set(activeAssignments.map((a) => a.assignee_profile_id)));
@@ -290,9 +278,15 @@ export default function ManagerAssignLeadPage() {
 
         setAssignments(
           activeAssignments.map((a) => ({
-            ...a,
+            id: a.id,
+            lead_id: null,
+            assignee_profile_id: a.assignee_profile_id,
+            status: a.status,
+            assigned_at: a.assigned_at,
             assignee_display_name: nameById.get(a.assignee_profile_id) ?? null,
-          })),
+            // attach deal_id to match later when resolving assignment per row
+            deal_id: a.deal_id ?? null,
+          })) as AssignmentRow[],
         );
       } else {
         setAssignments([]);
@@ -400,27 +394,26 @@ export default function ManagerAssignLeadPage() {
   const openAssignModal = useCallback(
     async (row: AssignLeadRow) => {
       try {
+        // Ensure we have a lead record, but prefer checking assignments by deal_id
         if (!row.lead_id) {
           setCreatingLeadFor(row.monday_item_id);
-          const leadId = await ensureLeadForRow(row);
-          if (!leadId) {
-            toast({
-              title: "Unable to assign",
-              description: "Could not create a lead record for this Monday item.",
-              variant: "destructive",
-            });
-            return;
+          try {
+            const leadId = await ensureLeadForRow(row);
+            if (leadId) {
+              const updatedRow: AssignLeadRow = { ...row, lead_id: leadId };
+              setRows((prev) => prev.map((r) => (r.monday_item_id === row.monday_item_id ? updatedRow : r)));
+              row = updatedRow;
+            }
+          } finally {
+            setCreatingLeadFor(null);
           }
-
-          const updatedRow: AssignLeadRow = { ...row, lead_id: leadId };
-          setRows((prev) =>
-            prev.map((r) => (r.monday_item_id === row.monday_item_id ? updatedRow : r)),
-          );
-          row = updatedRow;
         }
 
         setActiveLead(row);
-        const existingAssignment = currentAssignmentForLead(row.lead_id as string);
+        // Find existing assignment either by deal_id or lead_id
+        const existingAssignment = assignments.find(
+          (a) => (row.deal_id && a.deal_id === row.deal_id) || (row.lead_id && a.lead_id === row.lead_id),
+        );
         const currentAgentId = existingAssignment?.assignee_profile_id ?? null;
         setOriginalAgentId(currentAgentId);
         setSelectedAgentId(currentAgentId ?? "");
@@ -440,25 +433,67 @@ export default function ManagerAssignLeadPage() {
   );
 
   const handleSaveAssignment = async () => {
-    if (!activeLead || !activeLead.lead_id || !selectedAgentId) return;
+    if (!activeLead || !selectedAgentId) return;
     if (originalAgentId && selectedAgentId === originalAgentId) return;
+
+    const findDuplicateDealIdsForLead = async (): Promise<number[]> => {
+      const phone = (activeLead.phone_number ?? "").toString().trim();
+      const name = (activeLead.display_name ?? "").toString().trim();
+
+      if (!phone && !name) return [];
+
+      let q = supabase
+        .from("monday_com_deals")
+        .select("id")
+        .not("monday_item_id", "is", null)
+        .limit(5000);
+
+      if (phone) {
+        q = q.eq("phone_number", phone);
+      } else {
+        const escaped = name.replace(/,/g, "");
+        q = q.or(`ghl_name.ilike.%${escaped}%,deal_name.ilike.%${escaped}%`);
+      }
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      const ids = (data ?? [])
+        .map((r) => (typeof (r as { id?: unknown })?.id === "number" ? ((r as { id: number }).id as number) : null))
+        .filter((v): v is number => v != null);
+
+      return ids.filter((id) => id !== (activeLead.deal_id ?? null));
+    };
 
     setSaving(true);
     try {
-      // Check if an assignment already exists for this lead.
-      const { data: existingAssignment, error: existingError } = await supabase
-        .from("retention_assigned_leads")
-        .select("id")
-        .eq("lead_id", activeLead.lead_id)
-        .limit(1)
-        .maybeSingle();
+      // Prefer assignment by deal_id (new schema). If we have a deal_id use it, otherwise
+      // fallback to assigning by lead_id if the table still supports it (not expected).
+      let existingAssignment: { id: number | string } | null = null;
 
-      if (existingError) throw existingError;
+      if (activeLead.deal_id) {
+        const { data, error } = await supabase
+          .from("retention_assigned_leads")
+          .select("id, deal_id")
+          .eq("deal_id", activeLead.deal_id)
+          .limit(1)
+          .maybeSingle();
+        if (error) throw error;
+        existingAssignment = data;
+      } else if (activeLead.lead_id) {
+        const { data, error } = await supabase
+          .from("retention_assigned_leads")
+          .select("id, lead_id")
+          .eq("lead_id", activeLead.lead_id)
+          .limit(1)
+          .maybeSingle();
+        if (error) throw error;
+        existingAssignment = data;
+      }
 
       let mutationError: unknown = null;
 
       if (existingAssignment) {
-        // Update the existing row instead of inserting a new one to avoid duplicates.
         const { error } = await supabase
           .from("retention_assigned_leads")
           .update({
@@ -471,34 +506,97 @@ export default function ManagerAssignLeadPage() {
 
         mutationError = error;
       } else {
-        const { error } = await supabase.from("retention_assigned_leads").insert({
-          lead_id: activeLead.lead_id,
+        const payload: Record<string, unknown> = {
           assignee_profile_id: selectedAgentId,
           assigned_by_profile_id: selectedAgentId,
           status: "active",
-        });
+          assigned_at: new Date().toISOString(),
+        };
+        if (activeLead.deal_id) payload.deal_id = activeLead.deal_id;
+        else if (activeLead.lead_id) payload.lead_id = activeLead.lead_id;
 
+        const { error } = await supabase.from("retention_assigned_leads").insert(payload);
         mutationError = error;
       }
 
       if (mutationError) throw mutationError;
 
+      // Auto-assign duplicates (same client, different policies) to the same agent.
+      // We avoid stealing duplicates already assigned to a different active agent.
+      let autoAssigned = 0;
+      let alreadyAssignedToOther = 0;
+
+      if (activeLead.deal_id) {
+        const duplicateDealIds = await findDuplicateDealIdsForLead();
+        if (duplicateDealIds.length) {
+          const { data: existingRows, error: existingErr } = await supabase
+            .from("retention_assigned_leads")
+            .select("id, deal_id, assignee_profile_id, status")
+            .in("deal_id", duplicateDealIds)
+            .limit(10000);
+
+          if (existingErr) throw existingErr;
+
+          const existingByDealId = new Map<number, { id: string; assignee_profile_id: string; status: string }>();
+          for (const r of (existingRows ?? []) as Array<Record<string, unknown>>) {
+            const dealId = typeof r.deal_id === "number" ? (r.deal_id as number) : null;
+            const id = typeof r.id === "string" ? (r.id as string) : null;
+            const assignee = typeof r.assignee_profile_id === "string" ? (r.assignee_profile_id as string) : null;
+            const status = typeof r.status === "string" ? (r.status as string) : "";
+            if (dealId != null && id && assignee) existingByDealId.set(dealId, { id, assignee_profile_id: assignee, status });
+          }
+
+          const now = new Date().toISOString();
+
+          for (const dealId of duplicateDealIds) {
+            const existing = existingByDealId.get(dealId) ?? null;
+
+            if (existing && existing.status === "active" && existing.assignee_profile_id !== selectedAgentId) {
+              alreadyAssignedToOther += 1;
+              continue;
+            }
+
+            if (existing) {
+              if (existing.assignee_profile_id === selectedAgentId && existing.status === "active") continue;
+              const { error } = await supabase
+                .from("retention_assigned_leads")
+                .update({
+                  assignee_profile_id: selectedAgentId,
+                  assigned_by_profile_id: selectedAgentId,
+                  status: "active",
+                  assigned_at: now,
+                })
+                .eq("id", existing.id);
+              if (error) throw error;
+              autoAssigned += 1;
+            } else {
+              const { error } = await supabase.from("retention_assigned_leads").insert({
+                deal_id: dealId,
+                assignee_profile_id: selectedAgentId,
+                assigned_by_profile_id: selectedAgentId,
+                status: "active",
+                assigned_at: now,
+              });
+              if (error) throw error;
+              autoAssigned += 1;
+            }
+          }
+        }
+      }
+
+      // Refresh assignments by deal_id for current page
+      const dealIds = rows.map((r) => r.deal_id).filter((v): v is number => !!v);
       const { data: refreshedAssignments, error: refreshedError } = await supabase
         .from("retention_assigned_leads")
-        .select("id, lead_id, assignee_profile_id, status, assigned_at")
-        .in(
-          "lead_id",
-          rows.map((r) => r.lead_id).filter((v): v is string => !!v),
-        )
+        .select("id, deal_id, assignee_profile_id, status, assigned_at")
+        .in("deal_id", dealIds)
         .eq("status", "active");
 
       if (refreshedError) throw refreshedError;
 
-      const activeAssignments: AssignmentRow[] = (refreshedAssignments ?? []) as AssignmentRow[];
+      const activeAssignments = (refreshedAssignments ?? []) as AssignmentRow[];
       if (activeAssignments.length > 0) {
-        const agentIds = Array.from(
-          new Set(activeAssignments.map((a) => a.assignee_profile_id)),
-        );
+        const agentIds = Array.from(new Set(activeAssignments.map((a) => a.assignee_profile_id)));
         const { data: agentProfiles } = await supabase
           .from("profiles")
           .select("id, display_name")
@@ -524,7 +622,11 @@ export default function ManagerAssignLeadPage() {
         title: "Lead assigned",
         description:
           assignedAgent && activeLead.display_name
-            ? `${activeLead.display_name} assigned to ${assignedAgent.display_name ?? "agent"}`
+            ? `${activeLead.display_name} assigned to ${assignedAgent.display_name ?? "agent"}` +
+              (autoAssigned || alreadyAssignedToOther
+                ? ` • Auto-assigned ${autoAssigned} duplicate policy(s)` +
+                  (alreadyAssignedToOther ? ` (skipped ${alreadyAssignedToOther} already assigned)` : "")
+                : "")
             : "Lead assignment saved.",
       });
 
@@ -566,15 +668,6 @@ export default function ManagerAssignLeadPage() {
 
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Assign Leads</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            View all leads and assign each one to a retention agent.
-          </p>
-        </div>
-      </div>
-
       <div className="mx-auto">
         <Card>
           <CardHeader>
@@ -658,7 +751,7 @@ export default function ManagerAssignLeadPage() {
                 <div className="border-t p-3 text-sm text-muted-foreground">No leads found.</div>
               ) : (
                 rows.map((row) => {
-                  const assignment = row.lead_id ? currentAssignmentForLead(row.lead_id) : null;
+                  const assignment = assignments.find((a) => (row.lead_id && a.lead_id === row.lead_id) || (row.deal_id && a.deal_id === row.deal_id)) || null;
                   const isCreating = creatingLeadFor === row.monday_item_id;
                   return (
                     <div

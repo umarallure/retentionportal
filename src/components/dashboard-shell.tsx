@@ -1,21 +1,35 @@
 "use client";
 
-import * as React from "react";
+import { ReactNode, useEffect } from "react";
 
 import { AppSidebar } from "@/components/app-sidebar";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { BellIcon } from "lucide-react";
 
 import { useDashboard } from "@/components/dashboard-context";
+import { cn } from "@/lib/utils";
 
-export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const { setIsNotificationsOpen } = useDashboard();
+function DashboardShellInner({ children }: { children: ReactNode }) {
+  const { setIsNotificationsOpen, dialerOpen } = useDashboard();
+  const { open: sidebarOpen, setOpen: setSidebarOpen } = useSidebar();
+
+  useEffect(() => {
+    if (!dialerOpen || !sidebarOpen) return;
+
+    const timer = window.setTimeout(() => {
+      setSidebarOpen(false);
+    }, 2500);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [dialerOpen, sidebarOpen, setSidebarOpen]);
 
   return (
-    <SidebarProvider defaultOpen>
+    <>
       <AppSidebar />
       <SidebarInset>
         <div className="flex min-h-svh flex-col">
@@ -46,9 +60,24 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </div>
           </header>
 
-          <div className="flex flex-1 flex-col">{children}</div>
+          <div
+            className={cn(
+              "flex flex-1 flex-col transition-[padding-right] duration-200",
+              dialerOpen ? "pr-[420px]" : "pr-0",
+            )}
+          >
+            {children}
+          </div>
         </div>
       </SidebarInset>
+    </>
+  );
+}
+
+export function DashboardShell({ children }: { children: ReactNode }) {
+  return (
+    <SidebarProvider defaultOpen>
+      <DashboardShellInner>{children}</DashboardShellInner>
     </SidebarProvider>
   );
 }

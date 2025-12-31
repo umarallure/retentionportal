@@ -65,6 +65,13 @@ export function useCallUpdate() {
 
   const leadId = typeof router.query.leadId === "string" ? router.query.leadId : undefined;
   const policyNumber = typeof router.query.policyNumber === "string" ? router.query.policyNumber : undefined;
+  const dealId = (() => {
+    const raw = typeof router.query.dealId === "string" ? router.query.dealId : undefined;
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  })();
+  const callCenterFromRoute = typeof router.query.callCenter === "string" ? router.query.callCenter : "";
   const retentionAgent = typeof router.query.retentionAgent === "string" ? router.query.retentionAgent : "";
   const retentionType = (typeof router.query.retentionType === "string" ? router.query.retentionType : "") as
     | RetentionType
@@ -84,6 +91,11 @@ export function useCallUpdate() {
   const [policyDeal, setPolicyDeal] = useState<MondayComDeal | null>(null);
   const [policyDealLoading, setPolicyDealLoading] = useState(false);
   const [policyDealError, setPolicyDealError] = useState<string | null>(null);
+
+  const submissionIdFromDeal = useMemo(() => {
+    const raw = policyDeal && typeof policyDeal.monday_item_id === "string" ? policyDeal.monday_item_id.trim() : "";
+    return raw.length ? raw : null;
+  }, [policyDeal]);
 
   const leadVendorForInsert = useMemo(() => {
     return (
@@ -302,7 +314,7 @@ export function useCallUpdate() {
   useEffect(() => {
     if (!router.isReady) return;
 
-    if (!leadId) {
+    if (!leadId && dealId == null) {
       setLead(null);
       setLeadError("Missing leadId in URL.");
       return;
@@ -314,14 +326,36 @@ export function useCallUpdate() {
       setLoadingLead(true);
       setLeadError(null);
       try {
-        const { data, error } = await supabase
-          .from("leads")
-          .select("*")
-          .eq("id", leadId)
-          .maybeSingle();
+        // Prefer deriving the lead from the selected deal when dealId is present.
+        // This avoids mixing policy context (dealId/policyNumber/callCenter) with a stale leadId.
+        if (dealId != null && submissionIdFromDeal) {
+          const { data, error } = await supabase
+            .from("leads")
+            .select("*")
+            .eq("submission_id", submissionIdFromDeal)
+            .order("updated_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (error) throw error;
+          if (!cancelled) setLead((data ?? null) as LeadRecord | null);
+          return;
+        }
+
+        if (!leadId) {
+          if (!cancelled) {
+            setLead(null);
+            setLeadError("Missing leadId in URL.");
+          }
+          return;
+        }
+
+        const { data, error } = await supabase.from("leads").select("*").eq("id", leadId).maybeSingle();
 
         if (error) throw error;
-        if (!cancelled) setLead((data ?? null) as LeadRecord | null);
+        const leadData = (data ?? null) as LeadRecord | null;
+        
+        if (!cancelled) setLead(leadData);
       } catch (e) {
         if (!cancelled) {
           const msg = e instanceof Error ? e.message : "Failed to load lead.";
@@ -337,7 +371,7 @@ export function useCallUpdate() {
     return () => {
       cancelled = true;
     };
-  }, [leadId, router.isReady]);
+  }, [dealId, leadId, router.isReady, submissionIdFromDeal]);
 
   useEffect(() => {
     if (!lead || typeof lead["id"] !== "string") {
@@ -366,13 +400,14 @@ export function useCallUpdate() {
       setVerificationError(null);
       try {
         const leadIdLocal = lead["id"] as string;
+        const callCenterParam = callCenterFromRoute.trim().length ? callCenterFromRoute.trim() : getString(lead, "lead_vendor");
 
         const { data: sessionRow, error: sessionErr } = await supabase.rpc(
           "retention_get_or_create_verification_session",
           {
             lead_id_param: leadIdLocal,
             policy_number_param: policyNumber,
-            call_center_param: getString(lead, "lead_vendor"),
+            call_center_param: callCenterParam,
           },
         );
 
@@ -389,11 +424,6 @@ export function useCallUpdate() {
 
         if (sessionDbErr) throw sessionDbErr;
 
-        const { error: initErr } = await supabase.rpc("retention_initialize_verification_items", {
-          session_id_param: sessionId,
-        });
-        if (initErr) throw initErr;
-
         const { data: itemsRows, error: itemsErr } = await supabase
           .from("retention_verification_items")
           .select("*")
@@ -405,6 +435,7 @@ export function useCallUpdate() {
         if (cancelled) return;
 
         const rows = (itemsRows ?? []) as Array<Record<string, unknown>>;
+        
         setVerificationSessionId(sessionId);
         setVerificationSession(((sessionDbRow ?? null) as RetentionVerificationSessionRow | null) ?? session);
         setVerificationItems(rows);
@@ -417,6 +448,7 @@ export function useCallUpdate() {
           const ov = typeof r["original_value"] === "string" ? (r["original_value"] as string) : null;
           map[id] = (vv ?? ov ?? "").toString();
         }
+        
         setVerificationInputValues(map);
       } catch (e) {
         if (cancelled) return;
@@ -435,12 +467,12 @@ export function useCallUpdate() {
     return () => {
       cancelled = true;
     };
-  }, [lead, policyNumber]);
+  }, [callCenterFromRoute, lead, policyNumber]);
 
   useEffect(() => {
     if (!router.isReady) return;
 
-    if (!policyNumber || !policyNumber.trim().length) {
+    if ((!policyNumber || !policyNumber.trim().length) && dealId == null) {
       setPolicyDeal(null);
       setPolicyDealLoading(false);
       setPolicyDealError(null);
@@ -453,14 +485,18 @@ export function useCallUpdate() {
       setPolicyDealLoading(true);
       setPolicyDealError(null);
       try {
-        const { data, error } = await supabase
-          .from("monday_com_deals")
-          .select("*")
-          .eq("policy_number", policyNumber)
-          .order("last_updated", { ascending: false, nullsFirst: false })
-          .order("updated_at", { ascending: false, nullsFirst: false })
-          .limit(1)
-          .maybeSingle();
+        let q = supabase.from("monday_com_deals").select("*");
+        if (dealId != null) {
+          q = q.eq("id", dealId);
+        } else {
+          q = q
+            .eq("policy_number", policyNumber)
+            .order("last_updated", { ascending: false, nullsFirst: false })
+            .order("updated_at", { ascending: false, nullsFirst: false })
+            .limit(1);
+        }
+
+        const { data, error } = await q.maybeSingle();
 
         if (error) throw error;
         if (!cancelled) setPolicyDeal((data ?? null) as MondayComDeal | null);
@@ -479,20 +515,30 @@ export function useCallUpdate() {
     return () => {
       cancelled = true;
     };
-  }, [policyNumber, router.isReady]);
+  }, [dealId, policyNumber, router.isReady]);
 
   const toggleVerificationItem = async (itemId: string, checked: boolean) => {
+    const currentValue = verificationInputValues[itemId] ?? "";
+    const item = verificationItems.find((r) => r["id"] === itemId) ?? null;
+    const original = item && typeof item["original_value"] === "string" ? (item["original_value"] as string) : "";
+    const isModified = original !== currentValue;
+
     setVerificationItems((prev) =>
       prev.map((r) =>
         r["id"] === itemId
-          ? { ...r, is_verified: checked, verified_at: checked ? new Date().toISOString() : null }
+          ? { ...r, is_verified: checked, verified_at: checked ? new Date().toISOString() : null, verified_value: currentValue, is_modified: isModified }
           : r,
       ),
     );
 
     const { error: updateErr } = await supabase
       .from("retention_verification_items")
-      .update({ is_verified: checked, verified_at: checked ? new Date().toISOString() : null })
+      .update({ 
+        is_verified: checked, 
+        verified_at: checked ? new Date().toISOString() : null,
+        verified_value: currentValue,
+        is_modified: isModified
+      })
       .eq("id", itemId);
 
     if (updateErr) throw updateErr;

@@ -7,13 +7,8 @@ import { Input } from "@/components/ui/input";
 export default function UserManagementPage() {
   return (
     <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">User Management</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Administrative page to create, edit, deactivate users and assign roles (Retention Agent / Sales Manager).
-          </p>
-        </div>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+        <div />
         <Button type="button">Add User</Button>
       </div>
 
