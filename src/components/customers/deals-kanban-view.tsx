@@ -74,7 +74,7 @@ function buildGroupQuery(group: DealGroup, search: string, page: number, pageSiz
     .range(from, to);
 
   const includeOr: string[] = [];
-  for (const s of stages) includeOr.push(`ghl_stage.eq.${s}`);
+  for (const s of stages) includeOr.push(`ghl_stage.ilike.%${s.replace(/,/g, "")}%`);
 
   const shouldUseOr = stages.length > 0;
   if (shouldUseOr) {

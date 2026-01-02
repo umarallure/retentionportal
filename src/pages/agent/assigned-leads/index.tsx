@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 import { Loader2, EyeIcon, ChevronDown, ChevronRight } from "lucide-react";
+import { getDealLabelStyle, getDealTagLabelFromGhlStage } from "@/lib/monday-deal-category-tags";
 
 type AssignedLeadRow = {
   id: string;
@@ -19,6 +20,7 @@ type AssignedLeadRow = {
     monday_item_id: string | null;
     ghl_name: string | null;
     deal_name: string | null;
+    ghl_stage?: string | null;
     phone_number: string | null;
     call_center: string | null;
     carrier: string | null;
@@ -40,6 +42,7 @@ type DealRow = {
   monday_item_id: string | null;
   ghl_name: string | null;
   deal_name: string | null;
+  ghl_stage?: string | null;
   phone_number: string | null;
   call_center: string | null;
   carrier: string | null;
@@ -138,7 +141,7 @@ export default function AssignedLeadsPage() {
       if (dealIds.length > 0) {
         const { data: dealRows, error: dealsError } = await supabase
           .from("monday_com_deals")
-          .select("id,monday_item_id,ghl_name,deal_name,phone_number,call_center,carrier,policy_type,last_updated")
+          .select("id,monday_item_id,ghl_name,deal_name,ghl_stage,phone_number,call_center,carrier,policy_type,last_updated")
           .in("id", dealIds)
           .limit(5000);
 
@@ -201,6 +204,7 @@ export default function AssignedLeadsPage() {
                   monday_item_id: deal.monday_item_id ?? null,
                   ghl_name: deal.ghl_name ?? null,
                   deal_name: deal.deal_name ?? null,
+                  ghl_stage: deal.ghl_stage ?? null,
                   phone_number: deal.phone_number ?? null,
                   call_center: deal.call_center ?? null,
                   carrier: deal.carrier ?? null,
@@ -238,12 +242,15 @@ export default function AssignedLeadsPage() {
     const groups = new Map<string, AssignedLeadRow[]>();
     
     for (const lead of filteredLeads) {
+      const phoneNumber = (lead.lead?.phone_number ?? lead.deal?.phone_number ?? "").trim();
       const ghlName = (lead.lead?.customer_full_name ?? lead.deal?.ghl_name ?? lead.deal?.deal_name ?? "Unknown").trim().toLowerCase();
       
-      if (!groups.has(ghlName)) {
-        groups.set(ghlName, []);
+      const groupKey = phoneNumber || `no-phone-${ghlName}`;
+      
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, []);
       }
-      groups.get(ghlName)!.push(lead);
+      groups.get(groupKey)!.push(lead);
     }
     
     return Array.from(groups.entries()).map(([name, leads]) => ({
@@ -300,7 +307,7 @@ export default function AssignedLeadsPage() {
             </div>
 
             <div className="rounded-md border">
-              <div className="grid grid-cols-7 gap-3 p-3 text-sm font-medium text-muted-foreground">
+              <div className="grid gap-3 p-3 text-sm font-medium text-muted-foreground" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.2fr 1fr 0.8fr 0.8fr" }}>
                 <div>GHL Name</div>
                 <div>Carrier</div>
                 <div>Product Type</div>
@@ -321,7 +328,7 @@ export default function AssignedLeadsPage() {
                   
                   return (
                     <React.Fragment key={group.name}>
-                      <div className="grid grid-cols-7 gap-3 p-3 text-sm items-center border-t">
+                      <div className="grid gap-3 p-3 text-sm items-center border-t" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.2fr 1fr 0.8fr 0.8fr" }}>
                         <div className="flex items-center gap-2">
                           {group.isDuplicate ? (
                             <button
@@ -344,6 +351,19 @@ export default function AssignedLeadsPage() {
                               <span className="ml-2 text-xs text-muted-foreground">({group.leads.length})</span>
                             ) : null}
                           </div>
+                          {(() => {
+                            const label = getDealTagLabelFromGhlStage(primaryLead.deal?.ghl_stage ?? null);
+                            const style = getDealLabelStyle(label);
+                            if (!label || !style) return null;
+                            return (
+                              <span
+                                className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                                style={{ backgroundColor: style.bg, borderColor: style.border, color: style.text }}
+                              >
+                                {label}
+                              </span>
+                            );
+                          })()}
                         </div>
                         <div className="truncate" title={(primaryLead.lead?.carrier ?? primaryLead.deal?.carrier) ?? undefined}>
                           {primaryLead.lead?.carrier ?? primaryLead.deal?.carrier ?? "-"}
@@ -382,14 +402,24 @@ export default function AssignedLeadsPage() {
                         group.leads.slice(1).map((row) => {
                           const duplicateGhlName = row.lead?.customer_full_name ?? row.deal?.ghl_name ?? row.deal?.deal_name ?? "Unknown";
                           const viewHref = `/agent/assigned-lead-details?dealId=${encodeURIComponent(String(row.deal_id ?? ""))}`;
+                          const label = getDealTagLabelFromGhlStage(row.deal?.ghl_stage ?? null);
+                          const style = getDealLabelStyle(label);
                           
                           return (
-                            <div key={row.id} className="grid grid-cols-7 gap-3 p-3 text-sm items-center border-t bg-muted/30">
+                            <div key={row.id} className="grid gap-3 p-3 text-sm items-center border-t bg-muted/30" style={{ gridTemplateColumns: "2fr 1fr 1fr 1.2fr 1fr 0.8fr 0.8fr" }}>
                               <div className="flex items-center gap-2">
                                 <div className="w-5" />
                                 <div className="truncate" title={duplicateGhlName}>
                                   {duplicateGhlName}
                                 </div>
+                                {label && style ? (
+                                  <span
+                                    className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                                    style={{ backgroundColor: style.bg, borderColor: style.border, color: style.text }}
+                                  >
+                                    {label}
+                                  </span>
+                                ) : null}
                               </div>
                               <div className="truncate" title={(row.lead?.carrier ?? row.deal?.carrier) ?? undefined}>
                                 {row.lead?.carrier ?? row.deal?.carrier ?? "-"}
