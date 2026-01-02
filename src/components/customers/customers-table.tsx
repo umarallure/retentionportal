@@ -76,7 +76,7 @@ export function CustomersTable({ data, loading }: { data: MondayComDeal[]; loadi
     }
 
     return groups;
-  }, [data]);
+  }, [data, expandedGroups]);
 
   const toggleGroup = (title: string) => {
     setExpandedGroups(prev => ({ ...prev, [title]: !prev[title] }));
@@ -229,7 +229,7 @@ export function CustomersTable({ data, loading }: { data: MondayComDeal[]; loadi
                         group.deals.map((deal) => (
                           <TableRow
                             key={deal.id}
-                            className="group transition-colors hover:bg-muted/20 border-l-4 border-transparent hover:border-muted-foreground/20"
+                            className="group transition-colors hover:bg-muted/20 border-l-4 border-transparent hover:border-muted-foreground/20 cursor-pointer"
                           >
                             <TableCell className="py-4 px-6 text-sm">
                               <Link

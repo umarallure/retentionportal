@@ -116,7 +116,7 @@ export function GroupedDealsGroup({
       for (const t of titles) includeOr.push(`group_title.eq.${t}`);
 
       for (const p of stageIlikePatterns) includeOr.push(`ghl_stage.ilike.${p}`);
-      for (const s of stages) includeOr.push(`ghl_stage.eq.${s}`);
+      for (const s of stages) includeOr.push(`ghl_stage.ilike.%${s.replace(/,/g, "")}%`);
 
       // If any stage-based filter is provided, use a single OR-expression across all include rules.
       // Otherwise, fall back to the exact group_title filter for maximum index friendliness.
