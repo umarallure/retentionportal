@@ -121,7 +121,10 @@ export function DealPerformanceTab({ period, range }: { period: Period; range: D
                   cx="50%"
                   cy="50%"
                   labelLine={false}
-                  label={({ status, percentage }) => `${status}: ${percentage.toFixed(1)}%`}
+                  label={(props) => {
+                    const entry = props as unknown as { status: string; percentage: number };
+                    return `${entry.status}: ${entry.percentage.toFixed(1)}%`;
+                  }}
                   outerRadius={100}
                   fill="#8884d8"
                   dataKey="count"
@@ -166,7 +169,7 @@ export function DealPerformanceTab({ period, range }: { period: Period; range: D
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="carrier" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Tooltip formatter={(value: number | undefined) => value ? formatCurrency(value) : ''} />
                   <Legend />
                   <Bar dataKey="totalValue" fill="#3B82F6" name="Total Value" />
                   <Bar dataKey="totalDeals" fill="#10B981" name="Total Deals" />
@@ -207,7 +210,7 @@ export function DealPerformanceTab({ period, range }: { period: Period; range: D
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="agent" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Tooltip formatter={(value: number | undefined) => value ? formatCurrency(value) : ''} />
                   <Legend />
                   <Bar dataKey="totalValue" fill="#8B5CF6" name="Total Value" />
                   <Bar dataKey="totalDeals" fill="#EC4899" name="Total Deals" />

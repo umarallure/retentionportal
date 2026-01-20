@@ -1,46 +1,40 @@
 /**
  * Hook to listen for CloudTalk webhook events
- * Polls the latest contact endpoint and updates dashboard context
+ * Automatically navigates to deal details page when a call is answered
  */
 
 import { useEffect, useRef } from "react";
-import { useDashboard } from "@/components/dashboard-context";
 import { useRouter } from "next/router";
 
 export function useCloudTalkWebhook() {
-  const { setCurrentLeadPhone } = useDashboard();
   const router = useRouter();
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const lastContactRef = useRef<string | null>(null);
+  const lastDealIdRef = useRef<number | null>(null);
+  const processedContactsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Only poll if user is an agent (you can add access check here)
-    // For now, we'll poll for all users, but you can restrict it
-
     const pollLatestContact = async () => {
       try {
         const response = await fetch("/api/cloudtalk/webhook/latest");
         const data = await response.json();
 
         if (data.success && data.contact) {
-          const { phone, leadId, dealId } = data.contact;
+          const { phone, dealId } = data.contact;
 
-          // Only update if it's a new contact (different from last one)
-          if (phone && phone !== lastContactRef.current) {
-            lastContactRef.current = phone;
-            
-            // Update the current lead phone in dashboard context
-            setCurrentLeadPhone(phone);
+          // Create a unique key for this contact (phone + dealId)
+          const contactKey = `${phone}-${dealId}`;
 
-            console.log("[CloudTalk Webhook] Updated current lead phone:", phone, {
-              leadId,
-              dealId,
+          // Only process if it's a new contact we haven't seen before
+          if (dealId && !processedContactsRef.current.has(contactKey)) {
+            processedContactsRef.current.add(contactKey);
+            lastDealIdRef.current = dealId;
+
+            console.log("[CloudTalk Webhook] Call answered, navigating to deal:", dealId, {
+              phone,
             });
 
-            // Optional: Navigate to lead details if dealId is found
-            // if (dealId) {
-            //   router.push(`/agent/assigned-lead-details?dealld=${dealId}`);
-            // }
+            // Navigate to deal details page (client-side, no reload)
+            void router.push(`/agent/assigned-lead-details?dealld=${dealId}`);
           }
         }
       } catch (error) {
@@ -49,8 +43,8 @@ export function useCloudTalkWebhook() {
       }
     };
 
-    // Poll every 2 seconds for new contacts
-    pollingIntervalRef.current = setInterval(pollLatestContact, 2000);
+    // Poll every 1 second for faster response
+    pollingIntervalRef.current = setInterval(pollLatestContact, 1000);
 
     // Initial poll
     pollLatestContact();
@@ -60,7 +54,7 @@ export function useCloudTalkWebhook() {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [setCurrentLeadPhone, router]);
+  }, [router]);
 
   return null;
 }
