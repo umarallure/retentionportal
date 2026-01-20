@@ -880,6 +880,32 @@ export default function ManagerAssignLeadPage() {
         setAssignments([]);
       }
 
+      // Add contact to CloudTalk campaign (non-blocking)
+      if (activeLead.phone_number && selectedAgentId) {
+        try {
+          const response = await fetch("/api/cloudtalk/contact/add", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              phone_number: activeLead.phone_number,
+              full_name: activeLead.display_name,
+              agent_profile_id: selectedAgentId,
+            }),
+          });
+
+          const result = await response.json();
+          if (!result.success) {
+            console.warn("[CloudTalk] Failed to add contact:", result.error);
+            // Don't show error to user - assignment succeeded, CloudTalk is optional
+          }
+        } catch (cloudtalkError) {
+          console.error("[CloudTalk] Error adding contact:", cloudtalkError);
+          // Silently fail - assignment succeeded
+        }
+      }
+
       const assignedAgent = agents.find((a) => a.id === selectedAgentId);
       toast({
         title: "Lead assigned",

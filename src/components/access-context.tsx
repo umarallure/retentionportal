@@ -73,9 +73,15 @@ export function getDefaultLandingPath(access: AccessState): string {
 
 export function AccessProvider({ children }: { children: React.ReactNode }) {
   const [access, setAccess] = React.useState<AccessState>(defaultAccess);
+  const refreshingRef = React.useRef(false);
+  const currentUserIdRef = React.useRef<string | null>(null);
+  const accessLoadedRef = React.useRef(false);
 
   const refreshAccess = React.useCallback(async () => {
-    setAccess((prev) => ({ ...prev, loading: true }));
+    // Prevent duplicate refresh calls
+    if (refreshingRef.current) {
+      return;
+    }
 
     try {
       // First check session, then get user - this ensures session is established
@@ -87,6 +93,8 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       if (sessionErr || !session) {
         console.log("[access-context] No session found:", sessionErr?.message);
         setAccess({ ...defaultAccess, loading: false });
+        currentUserIdRef.current = null;
+        accessLoadedRef.current = false;
         return;
       }
 
@@ -98,8 +106,21 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       if (userErr || !user) {
         console.log("[access-context] No user found:", userErr?.message);
         setAccess({ ...defaultAccess, loading: false });
+        currentUserIdRef.current = null;
+        accessLoadedRef.current = false;
         return;
       }
+
+      // If user hasn't changed and access is already loaded, skip refresh
+      if (currentUserIdRef.current === user.id && accessLoadedRef.current) {
+        console.log("[access-context] User unchanged, skipping refresh");
+        return;
+      }
+
+      // Start refresh - set loading state and mark as refreshing
+      refreshingRef.current = true;
+      currentUserIdRef.current = user.id;
+      setAccess((prev) => ({ ...prev, loading: true }));
 
       const { data: profile, error: profileErr } = await supabase
         .from("profiles")
@@ -110,12 +131,16 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
       if (profileErr) {
         console.error("[access-context] Error fetching profile:", profileErr);
         setAccess({ loading: false, profileId: null, isAgent: false, isManager: false });
+        accessLoadedRef.current = false;
+        refreshingRef.current = false;
         return;
       }
 
       if (!profile?.id) {
         console.log("[access-context] No profile found for user:", user.id);
         setAccess({ loading: false, profileId: null, isAgent: false, isManager: false });
+        accessLoadedRef.current = false;
+        refreshingRef.current = false;
         return;
       }
 
@@ -160,27 +185,35 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
         isAgent,
         isManager,
       });
+      accessLoadedRef.current = true;
     } catch (error) {
       console.error("[access-context] Unexpected error in refreshAccess:", error);
       setAccess({ ...defaultAccess, loading: false });
+      accessLoadedRef.current = false;
+    } finally {
+      refreshingRef.current = false;
     }
   }, []);
 
   React.useEffect(() => {
     refreshAccess();
 
-    // Listen for auth state changes (login, logout, session refresh)
+    // Listen for auth state changes (login, logout, user updates)
+    // Note: We don't refresh on TOKEN_REFRESHED to prevent unnecessary reloads when switching tabs
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       console.log("[access-context] Auth state changed:", event, session?.user?.id);
-      if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
-        // Refresh access when user signs in or session is refreshed
+      if (event === "SIGNED_IN" || event === "USER_UPDATED") {
+        // Refresh access when user signs in or user data is updated
         refreshAccess();
       } else if (event === "SIGNED_OUT") {
         // Clear access when user signs out
+        currentUserIdRef.current = null;
+        accessLoadedRef.current = false;
         setAccess({ ...defaultAccess, loading: false });
       }
+      // TOKEN_REFRESHED is intentionally ignored to prevent reloads when switching tabs
     });
 
     return () => {

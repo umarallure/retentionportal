@@ -10,12 +10,14 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { CloudTalkPopover } from "@/components/cloudtalk/cloudtalk-popover";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
 import { useDashboard } from "@/components/dashboard-context";
+import { useAccess } from "@/components/access-context";
 
 export function CloudTalkWidget() {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const sidebar = useOptionalSidebar();
   const { setDialerOpen } = useDashboard();
+  const { access } = useAccess();
 
   const isLeadDetailsPage = router.pathname === "/agent/assigned-lead-details";
 
@@ -25,6 +27,11 @@ export function CloudTalkWidget() {
     setDialerOpen(true);
     if (sidebar?.setOpen) sidebar.setOpen(false);
   }, [isLeadDetailsPage, setDialerOpen, sidebar]);
+  
+  // Hide this widget for agents on all pages (they use CloudTalkDialerWidget instead)
+  if (access.isAgent) {
+    return null;
+  }
 
   return (
     <div className="fixed bottom-6 right-6 z-60">
@@ -59,4 +66,5 @@ export function CloudTalkWidget() {
     </div>
   );
 }
+
 

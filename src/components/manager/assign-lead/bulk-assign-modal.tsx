@@ -591,6 +591,39 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
         if (!success) {
           throw lastError;
         }
+
+        // Add contacts to CloudTalk (non-blocking, in background)
+        // Get phone numbers and names for this batch
+        const batchDealIds = batch.map((p) => p.deal_id);
+        const batchIdentities = batchDealIds
+          .map((dealId) => {
+            const identity = identityById.get(dealId);
+            const assignee = finalAssignments.get(dealId);
+            if (!identity || !assignee) return null;
+            return { identity, assignee };
+          })
+          .filter((v): v is { identity: DealIdentityRow; assignee: string } => !!v);
+
+        // Add to CloudTalk in parallel (don't await - fire and forget)
+        for (const { identity, assignee } of batchIdentities) {
+          if (identity.phone_number && identity.phone_number.trim()) {
+            const fullName = identity.ghl_name || identity.deal_name || "";
+            // Fire and forget - don't block assignment
+            fetch("/api/cloudtalk/contact/add", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                phone_number: identity.phone_number,
+                full_name: fullName,
+                agent_profile_id: assignee,
+              }),
+            }).catch((err) => {
+              console.warn("[CloudTalk] Failed to add contact in bulk:", err);
+            });
+          }
+        }
       }
 
       toast({

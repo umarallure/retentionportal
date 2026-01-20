@@ -21,11 +21,13 @@ import { useNavigationPrevention } from "@/components/agent/assigned-lead-detail
 import { useRetentionAgent } from "@/components/agent/assigned-lead-details/use-retention-agent";
 import { DataValidationPanel } from "@/components/data-quality/data-validation-panel";
 import { ActivityTimeline } from "@/components/data-quality/activity-timeline";
+import { useAccess } from "@/components/access-context";
 
 export default function AssignedLeadDetailsPage() {
   const { setCurrentLeadPhone } = useDashboard();
   const router = useRouter();
   const { retentionAgent, retentionAgentId } = useRetentionAgent();
+  const { access } = useAccess();
 
   const [expandedWorkflowKey, setExpandedWorkflowKey] = React.useState<string | null>(null);
   const [activeWorkflowType, setActiveWorkflowType] = React.useState<RetentionType | null>(null);
@@ -303,6 +305,7 @@ export default function AssignedLeadDetailsPage() {
                   </Tabs>
                 </div>
 
+                <div className="space-y-4">
                 <VerificationPanel
                   selectedPolicyView={selectedPolicyView}
                   loading={verificationLoading}
@@ -312,6 +315,7 @@ export default function AssignedLeadDetailsPage() {
                   onToggleVerification={toggleVerificationItem}
                   onUpdateValue={updateVerificationItemValue}
                 />
+                </div>
               </div>
             )}
           </CardContent>
