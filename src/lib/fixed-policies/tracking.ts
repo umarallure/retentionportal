@@ -76,6 +76,13 @@ export async function createFixedPolicyTracking(params: {
         console.error("[fixed-policies] Error updating tracking record:", error);
         throw error;
       }
+      
+      // Update policy_status in retention_deal_flow to 'fixed'
+      await supabase
+        .from("retention_deal_flow")
+        .update({ policy_status: "fixed" })
+        .eq("submission_id", params.submissionId);
+      
       console.log("[fixed-policies] Successfully updated tracking record");
       return data as FixedPolicyTrackingRecord;
     }
@@ -102,6 +109,12 @@ export async function createFixedPolicyTracking(params: {
       console.error("[fixed-policies] Error details:", JSON.stringify(error, null, 2));
       throw error;
     }
+    
+    // Update policy_status in retention_deal_flow to 'fixed'
+    await supabase
+      .from("retention_deal_flow")
+      .update({ policy_status: "fixed" })
+      .eq("submission_id", params.submissionId);
     
     console.log("[fixed-policies] Successfully created tracking record:", data?.id);
     return data as FixedPolicyTrackingRecord;

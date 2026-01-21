@@ -19,7 +19,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   // Get request body
-  const { phone_number, first_name, last_name, full_name, agent_profile_id } = req.body;
+  const { phone_number, first_name, last_name, full_name, agent_profile_id, deal_id } = req.body;
 
   if (!phone_number) {
     return res.status(400).json({
@@ -54,8 +54,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     lastName = "Contact";
   }
 
+  // Parse deal_id if provided
+  const parsedDealId = deal_id ? Number(deal_id) : undefined;
+  const dealIdNum = parsedDealId && Number.isFinite(parsedDealId) ? parsedDealId : undefined;
+
   try {
-    const result = await addContactToCloudTalk(phone_number, firstName, lastName, agent_profile_id);
+    const result = await addContactToCloudTalk(phone_number, firstName, lastName, agent_profile_id, dealIdNum);
 
     if (result.success) {
       return res.status(200).json({

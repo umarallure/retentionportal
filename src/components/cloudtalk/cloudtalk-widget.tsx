@@ -20,7 +20,7 @@ export function CloudTalkWidget() {
   const { access } = useAccess();
 
   const isLeadDetailsPage = router.pathname === "/agent/assigned-lead-details";
-
+  
   React.useEffect(() => {
     if (!isLeadDetailsPage) return;
     setOpen(true);

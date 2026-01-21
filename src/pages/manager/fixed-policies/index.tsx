@@ -56,11 +56,16 @@ type FixedPolicyRow = {
 
 export default function FixedPoliciesPage() {
   const { toast } = useToast();
-  const [loading, setLoading] = useState(false);
+  // Separate loading states for better UX
+  const [loadingHandled, setLoadingHandled] = useState(false);
+  const [loadingFixed, setLoadingFixed] = useState(false);
+  const [loadingRejected, setLoadingRejected] = useState(false);
   const [fixedPolicies, setFixedPolicies] = useState<FixedPolicyRow[]>([]);
   const [handledPolicies, setHandledPolicies] = useState<any[]>([]);
-  const [viewMode, setViewMode] = useState<"fixed" | "handled">("handled");
+  const [viewMode, setViewMode] = useState<"fixed" | "handled" | "rejected">("handled");
+  const [rejectedPolicies, setRejectedPolicies] = useState<any[]>([]);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [attentionFilter, setAttentionFilter] = useState<string>("all"); // "all" | "needs_confirmation" | "future_draft" | "past_draft"
@@ -68,37 +73,165 @@ export default function FixedPoliciesPage() {
   const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
   const [markingAsFixed, setMarkingAsFixed] = useState<string | null>(null);
   const [rejectingPolicy, setRejectingPolicy] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize] = useState(100);
 
   const loadFixedPolicies = useCallback(async () => {
-    setLoading(true);
+    setLoadingFixed(true);
     try {
       const data = await getFixedPoliciesWithCurrentStatus({
         retentionAgentName: agentFilter !== "all" ? agentFilter : undefined,
         statusWhenFixed: statusFilter !== "all" ? statusFilter : undefined,
-        limit: 1000,
+        limit: pageSize,
+        offset: page * pageSize,
       });
 
       setFixedPolicies((data ?? []) as FixedPolicyRow[]);
     } catch (error) {
       console.error("[fixed-policies] Error loading:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load fixed policies",
+        variant: "destructive",
+      });
     } finally {
-      setLoading(false);
+      setLoadingFixed(false);
     }
-  }, [agentFilter, statusFilter]);
+  }, [agentFilter, statusFilter, page, pageSize, toast]);
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(0); // Reset to first page when search changes
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const loadHandledPolicies = useCallback(async () => {
-    setLoading(true);
+    setLoadingHandled(true);
     try {
       const data = await getAllHandledPolicies({
         agentName: agentFilter !== "all" ? agentFilter : undefined,
+        search: debouncedSearch || undefined,
+        limit: pageSize,
+        offset: page * pageSize,
       });
       setHandledPolicies(data ?? []);
     } catch (error) {
       console.error("[fixed-policies] Error loading handled policies:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load handled policies",
+        variant: "destructive",
+      });
     } finally {
-      setLoading(false);
+      setLoadingHandled(false);
     }
-  }, [agentFilter]);
+  }, [agentFilter, debouncedSearch, page, pageSize, toast]);
+
+  const loadRejectedPolicies = useCallback(async () => {
+    setLoadingRejected(true);
+    try {
+      // Fetch rejected policies from retention_deal_flow
+      let query = supabase
+        .from("retention_deal_flow")
+        .select(`
+          submission_id,
+          retention_agent,
+          status,
+          policy_status,
+          draft_date,
+          notes,
+          policy_number,
+          carrier,
+          updated_at
+        `)
+        .eq("policy_status", "rejected")
+        .order("updated_at", { ascending: false });
+
+      if (agentFilter !== "all") {
+        query = query.eq("retention_agent", agentFilter);
+      }
+
+      const { data: rejectedData, error } = await query;
+
+      if (error) {
+        console.error("[fixed-policies] Error loading rejected policies:", error);
+        throw error;
+      }
+
+      if (!rejectedData || rejectedData.length === 0) {
+        setRejectedPolicies([]);
+        return;
+      }
+
+      // Get unique submission_ids to fetch monday_com_deals
+      const submissionIds = Array.from(
+        new Set(rejectedData.map((p) => p.submission_id).filter(Boolean))
+      ) as string[];
+
+      // Fetch monday_com_deals by matching monday_item_id to submission_id
+      const { data: mondayDeals, error: dealsError } = await supabase
+        .from("monday_com_deals")
+        .select("id, policy_number, ghl_name, deal_name, phone_number, carrier, policy_status, ghl_stage, status, monday_item_id")
+        .in("monday_item_id", submissionIds)
+        .eq("is_active", true);
+
+      if (dealsError) {
+        console.error("[fixed-policies] Error fetching monday deals for rejected policies:", dealsError);
+      }
+
+      // Create a map of monday_item_id -> deal
+      const dealsBySubmissionId = new Map();
+      (mondayDeals ?? []).forEach((deal) => {
+        const mondayItemId = typeof deal.monday_item_id === "string" ? deal.monday_item_id.trim() : null;
+        if (mondayItemId && deal) {
+          dealsBySubmissionId.set(mondayItemId, deal);
+        }
+      });
+
+      // Transform data to match expected format
+      const transformed = rejectedData.map((policy) => {
+        const mondayDeal = dealsBySubmissionId.get(policy.submission_id) ?? null;
+        
+        return {
+          submission_id: policy.submission_id,
+          retention_agent: policy.retention_agent,
+          status: policy.status,
+          policy_status: policy.policy_status,
+          draft_date: policy.draft_date,
+          notes: policy.notes,
+          policy_number: policy.policy_number,
+          carrier: policy.carrier,
+          updated_at: policy.updated_at,
+          monday_com_deals: mondayDeal ? {
+            id: mondayDeal.id,
+            policy_number: typeof mondayDeal.policy_number === "string" ? mondayDeal.policy_number : null,
+            ghl_name: typeof mondayDeal.ghl_name === "string" ? mondayDeal.ghl_name : null,
+            deal_name: typeof mondayDeal.deal_name === "string" ? mondayDeal.deal_name : null,
+            phone_number: typeof mondayDeal.phone_number === "string" ? mondayDeal.phone_number : null,
+            carrier: typeof mondayDeal.carrier === "string" ? mondayDeal.carrier : null,
+            policy_status: typeof mondayDeal.policy_status === "string" ? mondayDeal.policy_status : null,
+            ghl_stage: typeof mondayDeal.ghl_stage === "string" ? mondayDeal.ghl_stage : null,
+            status: typeof mondayDeal.status === "string" ? mondayDeal.status : null,
+          } : null,
+        };
+      });
+
+      setRejectedPolicies(transformed);
+    } catch (error) {
+      console.error("[fixed-policies] Error loading rejected policies:", error);
+      toast({
+        title: "Error",
+        description: "Failed to load rejected policies",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingRejected(false);
+    }
+  }, [agentFilter, toast]);
 
   const handleMarkAsFixed = useCallback(async (policy: any) => {
     setMarkingAsFixed(policy.submission_id);
@@ -131,8 +264,12 @@ export default function FixedPoliciesPage() {
           title: "Success",
           description: "Policy marked as fixed",
         });
-        // Reload both lists
-        await Promise.all([loadFixedPolicies(), loadHandledPolicies()]);
+        // Reload all relevant lists based on current view
+        await Promise.all([
+          loadFixedPolicies(),
+          loadHandledPolicies(),
+          loadRejectedPolicies(),
+        ]);
       } else {
         throw new Error("Failed to mark as fixed");
       }
@@ -146,24 +283,21 @@ export default function FixedPoliciesPage() {
     } finally {
       setMarkingAsFixed(null);
     }
-  }, [loadFixedPolicies, loadHandledPolicies, toast]);
+  }, [loadFixedPolicies, loadHandledPolicies, loadRejectedPolicies, toast]);
 
   const handleReject = useCallback(async (policy: any) => {
     setRejectingPolicy(policy.submission_id);
     try {
-      // Mark policy as rejected by creating a record in rejected_policies_tracking table
-      // If table doesn't exist, we'll use a notes update approach
+      // Mark policy as rejected using policy_status field
       const { error } = await supabase
         .from("retention_deal_flow")
         .update({
-          notes: `[REJECTED] ${policy.notes || ""}`.trim(),
-          status: policy.status ? `${policy.status} - REJECTED` : "REJECTED",
+          policy_status: "rejected",
+          notes: policy.notes ? `${policy.notes} [Rejected]`.trim() : "[Rejected]",
         })
         .eq("submission_id", policy.submission_id);
 
       if (error) {
-        // If update fails, try creating a rejected tracking record
-        // For now, we'll just update the notes
         console.error("[fixed-policies] Error rejecting policy:", error);
         throw error;
       }
@@ -172,8 +306,11 @@ export default function FixedPoliciesPage() {
         title: "Success",
         description: "Policy marked as rejected",
       });
-      // Reload handled policies list
-      await loadHandledPolicies();
+      // Reload all relevant lists
+      await Promise.all([
+        loadHandledPolicies(),
+        loadRejectedPolicies(),
+      ]);
     } catch (error) {
       console.error("[fixed-policies] Error rejecting policy:", error);
       toast({
@@ -184,7 +321,7 @@ export default function FixedPoliciesPage() {
     } finally {
       setRejectingPolicy(null);
     }
-  }, [loadHandledPolicies, toast]);
+  }, [loadHandledPolicies, loadRejectedPolicies, toast]);
 
   const loadFilterOptions = useCallback(async () => {
     try {
@@ -232,53 +369,85 @@ export default function FixedPoliciesPage() {
     }
   }, []);
 
+  // Load filter options once on mount
+  useEffect(() => {
+    void loadFilterOptions();
+  }, [loadFilterOptions]);
+
+  // Load data when view mode or filters change
   useEffect(() => {
     if (viewMode === "fixed") {
       void loadFixedPolicies();
+    } else if (viewMode === "rejected") {
+      void loadRejectedPolicies();
     } else {
       void loadHandledPolicies();
     }
-    void loadFilterOptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, agentFilter, debouncedSearch, page]); // Only depend on actual filter values
 
-    // Auto-refresh every 5 minutes to update draft status calculations
-    const interval = setInterval(() => {
-      if (viewMode === "fixed") {
-        void loadFixedPolicies();
-      } else {
-        void loadHandledPolicies();
+  // Smart auto-refresh: only when tab is visible and every 10 minutes
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    
+    let interval: NodeJS.Timeout | null = null;
+    
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        // Reload when tab becomes visible
+        if (viewMode === "fixed") {
+          void loadFixedPolicies();
+        } else if (viewMode === "rejected") {
+          void loadRejectedPolicies();
+        } else {
+          void loadHandledPolicies();
+        }
       }
-    }, 5 * 60 * 1000); // 5 minutes
+    };
 
-    return () => clearInterval(interval);
-  }, [loadFixedPolicies, loadHandledPolicies, loadFilterOptions, viewMode]);
+    // Set up visibility change listener
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Auto-refresh every 10 minutes when tab is visible
+    if (document.visibilityState === "visible") {
+      interval = setInterval(() => {
+        if (document.visibilityState === "visible") {
+          if (viewMode === "fixed") {
+            void loadFixedPolicies();
+          } else if (viewMode === "rejected") {
+            void loadRejectedPolicies();
+          } else {
+            void loadHandledPolicies();
+          }
+        }
+      }, 10 * 60 * 1000); // 10 minutes
+    }
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]); // Only depend on viewMode for auto-refresh
 
   const filteredPolicies = useMemo(() => {
-    const searchLower = search.toLowerCase().trim();
-    
+    // Search is now handled server-side for handled policies
     if (viewMode === "handled") {
-      // Agent filter is already applied server-side in loadHandledPolicies
-      // Apply search and attention filters client-side
+      // Agent and search filters are already applied server-side
+      // Only apply attention filters client-side
       return handledPolicies.filter((policy) => {
-        // Filter out rejected policies
-        const notes = policy.notes ?? "";
-        const status = policy.status ?? "";
-        if (notes.includes("[REJECTED]") || status.includes("REJECTED")) {
+        // Filter out rejected and fixed policies (only show handled)
+        if (policy.policy_status === "rejected" || policy.policy_status === "fixed") {
+          return false;
+        }
+        // Only show policies with status 'handled' or 'pending' (legacy support)
+        if (policy.policy_status && policy.policy_status !== "handled" && policy.policy_status !== "pending") {
           return false;
         }
         
-        // Apply search filter
-        if (searchLower) {
-          const matchesSearch = 
-            (policy.monday_com_deals?.policy_number ?? "").toLowerCase().includes(searchLower) ||
-            (policy.monday_com_deals?.ghl_name ?? "").toLowerCase().includes(searchLower) ||
-            (policy.monday_com_deals?.deal_name ?? "").toLowerCase().includes(searchLower) ||
-            (policy.monday_com_deals?.phone_number ?? "").toLowerCase().includes(searchLower) ||
-            (policy.retention_agent ?? "").toLowerCase().includes(searchLower) ||
-            (policy.notes ?? "").toLowerCase().includes(searchLower);
-          if (!matchesSearch) return false;
-        }
-        
-        // Apply attention filter
+        // Apply attention filter (search is handled server-side)
         if (attentionFilter === "needs_confirmation") {
           const draftStatus = getDraftDateStatus(policy.draft_date, policy.status);
           if (!draftStatus.needsConfirmation) return false;
@@ -294,7 +463,8 @@ export default function FixedPoliciesPage() {
       });
     }
     
-    // Fixed view filtering
+    // Fixed view filtering (search still client-side for fixed policies)
+    const searchLower = debouncedSearch.toLowerCase().trim();
     return fixedPolicies.filter((policy) => {
       // Apply search filter
       const matchesSearch =
@@ -321,69 +491,12 @@ export default function FixedPoliciesPage() {
         }
       }
 
-      // Apply attention filter
-      if (attentionFilter === "needs_confirmation") {
-        const draftStatus = getDraftDateStatus(policy.draft_date, policy.status_when_fixed);
-        if (!draftStatus.needsConfirmation) return false;
-      } else if (attentionFilter === "future_draft") {
-        const draftStatus = getDraftDateStatus(policy.draft_date, policy.status_when_fixed);
-        if (!draftStatus.isFuture) return false;
-      }
-
+      // Attention filter removed for Fixed tab - only applies to Handled tab
       return true;
     });
-  }, [fixedPolicies, handledPolicies, search, agentFilter, statusFilter, attentionFilter, viewMode]);
+  }, [fixedPolicies, handledPolicies, debouncedSearch, agentFilter, statusFilter, attentionFilter, viewMode]);
 
-  // Calculate summary statistics for fixed policies
-  const summaryStats = useMemo(() => {
-    const stats = {
-      total: fixedPolicies.length,
-      needsConfirmation: 0,
-      futureDraft: 0,
-      pastDraft: 0,
-      avgBusinessDaysPast: 0,
-      maxBusinessDaysPast: 0,
-      confirmationBreakdown: {
-        days2to3: 0,
-        days4to5: 0,
-        days6plus: 0,
-      },
-    };
-
-    const confirmationBusinessDays: number[] = [];
-
-    fixedPolicies.forEach((policy) => {
-      const draftStatus = getDraftDateStatus(policy.draft_date, policy.status_when_fixed);
-      if (draftStatus.needsConfirmation) {
-        stats.needsConfirmation++;
-        confirmationBusinessDays.push(draftStatus.businessDaysSince);
-        // Breakdown by business days ranges
-        if (draftStatus.businessDaysSince >= 2 && draftStatus.businessDaysSince <= 3) {
-          stats.confirmationBreakdown.days2to3++;
-        } else if (draftStatus.businessDaysSince >= 4 && draftStatus.businessDaysSince <= 5) {
-          stats.confirmationBreakdown.days4to5++;
-        } else if (draftStatus.businessDaysSince >= 6) {
-          stats.confirmationBreakdown.days6plus++;
-        }
-      }
-      if (draftStatus.isFuture) stats.futureDraft++;
-      if (!draftStatus.isFuture && policy.draft_date) {
-        stats.pastDraft++;
-        if (draftStatus.businessDaysSince > stats.maxBusinessDaysPast) {
-          stats.maxBusinessDaysPast = draftStatus.businessDaysSince;
-        }
-      }
-    });
-
-    // Calculate average business days for policies needing confirmation
-    if (confirmationBusinessDays.length > 0) {
-      stats.avgBusinessDaysPast = Math.round(
-        (confirmationBusinessDays.reduce((sum, days) => sum + days, 0) / confirmationBusinessDays.length) * 10
-      ) / 10;
-    }
-
-    return stats;
-  }, [fixedPolicies]);
+  // Summary stats removed for Fixed tab - draft date logic only applies to Handled tab
 
   // Calculate summary statistics for handled policies
   const handledStats = useMemo(() => {
@@ -476,6 +589,8 @@ export default function FixedPoliciesPage() {
               <CardDescription>
                 {viewMode === "handled" 
                   ? "Policies handled by agents - Mark as fixed when ready"
+                  : viewMode === "rejected"
+                  ? "Policies rejected by managers"
                   : "Track policies marked as 'Fixed' and monitor their progress"}
               </CardDescription>
             </div>
@@ -495,19 +610,33 @@ export default function FixedPoliciesPage() {
                 >
                   Fixed ({fixedPolicies.length})
                 </Button>
+                <Button
+                  variant={viewMode === "rejected" ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => setViewMode("rejected")}
+                >
+                  Rejected ({rejectedPolicies.length})
+                </Button>
               </div>
               <Button 
                 onClick={() => {
+                  setPage(0); // Reset to first page on refresh
                   if (viewMode === "fixed") {
                     void loadFixedPolicies();
+                  } else if (viewMode === "rejected") {
+                    void loadRejectedPolicies();
                   } else {
                     void loadHandledPolicies();
                   }
                 }} 
-                disabled={loading} 
+                disabled={loadingFixed || loadingHandled || loadingRejected} 
                 variant="outline"
               >
-                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                {(loadingFixed || loadingHandled || loadingRejected) ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                )}
                 Refresh
               </Button>
             </div>
@@ -551,16 +680,16 @@ export default function FixedPoliciesPage() {
                 </SelectContent>
               </Select>
               )}
+              {/* Attention filter only for Handled tab */}
+              {viewMode === "handled" && (
               <Select value={attentionFilter} onValueChange={setAttentionFilter}>
                 <SelectTrigger className="w-[200px]">
                   <SelectValue placeholder="All Policies" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Policies</SelectItem>
-                  {viewMode === "handled" ? (
-                    <>
                       <SelectItem value="needs_confirmation">
-                        ⚠️ Needs Attention ({handledStats.needsConfirmation})
+                        ⚠️ Needs Confirmation ({handledStats.needsConfirmation})
                       </SelectItem>
                       <SelectItem value="past_draft">
                         📅 Past Draft Date ({handledStats.pastDraftDate})
@@ -568,19 +697,9 @@ export default function FixedPoliciesPage() {
                       <SelectItem value="future_draft">
                         🔮 Future Draft
                       </SelectItem>
-                    </>
-                  ) : (
-                    <>
-                      <SelectItem value="needs_confirmation">
-                        ⚠️ Needs Confirmation ({summaryStats.needsConfirmation})
-                      </SelectItem>
-                      <SelectItem value="future_draft">
-                        📅 Future Draft ({summaryStats.futureDraft})
-                      </SelectItem>
-                    </>
-                  )}
                 </SelectContent>
               </Select>
+              )}
             </div>
 
             {/* Summary Cards for Handled View */}
@@ -599,17 +718,20 @@ export default function FixedPoliciesPage() {
                   <CardContent className="p-4">
                     <div className="text-sm text-muted-foreground flex items-center gap-2">
                       <AlertCircle className="h-4 w-4" />
-                      Needs Attention
+                      Needs Confirmation
                     </div>
                     <div className={`text-2xl font-bold ${handledStats.needsConfirmation > 0 ? "text-destructive" : ""}`}>
                       {handledStats.needsConfirmation}
                     </div>
                     <div className="text-xs text-muted-foreground mt-1">
-                      Past 2+ business days from draft
+                      Ready to mark as Fixed or Rejected
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      (2+ business days past draft)
                     </div>
                     {handledStats.needsConfirmation > 0 && handledStats.avgBusinessDaysPast > 0 && (
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Avg: {handledStats.avgBusinessDaysPast} business days
+                      <div className="text-xs text-muted-foreground mt-1 font-medium">
+                        Avg: {handledStats.avgBusinessDaysPast} business days past
                       </div>
                     )}
                   </CardContent>
@@ -650,79 +772,8 @@ export default function FixedPoliciesPage() {
               </div>
             )}
 
-            {/* Summary Cards for Fixed View */}
-            {viewMode === "fixed" && fixedPolicies.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="text-sm text-muted-foreground">Total Fixed</div>
-                    <div className="text-2xl font-bold">{summaryStats.total}</div>
-                  </CardContent>
-                </Card>
-                <Card className={summaryStats.needsConfirmation > 0 ? "border-destructive" : ""}>
-                  <CardContent className="p-4">
-                    <div className="text-sm text-muted-foreground flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4" />
-                      Needs Confirmation
-                    </div>
-                    <div className={`text-2xl font-bold ${summaryStats.needsConfirmation > 0 ? "text-destructive" : ""}`}>
-                      {summaryStats.needsConfirmation}
-                    </div>
-                    {summaryStats.needsConfirmation > 0 ? (
-                      <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                        <div>Avg: {summaryStats.avgBusinessDaysPast} business days</div>
-                        {Object.values(summaryStats.confirmationBreakdown).some(count => count > 0) && (
-                          <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs mt-0.5">
-                            {summaryStats.confirmationBreakdown.days2to3 > 0 && (
-                              <span className="whitespace-nowrap">2-3 days: {summaryStats.confirmationBreakdown.days2to3}</span>
-                            )}
-                            {summaryStats.confirmationBreakdown.days4to5 > 0 && (
-                              <span className="whitespace-nowrap">4-5 days: {summaryStats.confirmationBreakdown.days4to5}</span>
-                            )}
-                            {summaryStats.confirmationBreakdown.days6plus > 0 && (
-                              <span className="whitespace-nowrap">6+ days: {summaryStats.confirmationBreakdown.days6plus}</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Past 2+ business days
-                    </div>
-                    )}
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="text-sm text-muted-foreground flex items-center gap-2">
-                      <Clock className="h-4 w-4" />
-                      Future Draft
-                    </div>
-                    <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-                      {summaryStats.futureDraft}
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Draft date upcoming
-                    </div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <div className="text-sm text-muted-foreground">Past Draft</div>
-                    <div className="text-2xl font-bold">{summaryStats.pastDraft}</div>
-                    {summaryStats.pastDraft > 0 && summaryStats.maxBusinessDaysPast > 0 ? (
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Max: {summaryStats.maxBusinessDaysPast} business days past
-                      </div>
-                    ) : (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Draft date passed
-                    </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            )}
+            {/* Summary Cards - Only for Handled View */}
+            {/* Fixed and Rejected tabs don't show status cards */}
 
             {/* Table */}
             <div className="rounded-md border">
@@ -739,8 +790,15 @@ export default function FixedPoliciesPage() {
                         <TableHead>Current Status</TableHead>
                         <TableHead>Next Fixed Status</TableHead>
                         <TableHead>Draft Date</TableHead>
-                        <TableHead>Draft Status</TableHead>
                         <TableHead>Fixed Date</TableHead>
+                      </>
+                    ) : viewMode === "rejected" ? (
+                      <>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Current Status</TableHead>
+                        <TableHead>Draft Date</TableHead>
+                        <TableHead>Rejected Date</TableHead>
+                        <TableHead>Actions</TableHead>
                       </>
                     ) : (
                       <>
@@ -760,13 +818,19 @@ export default function FixedPoliciesPage() {
                 <TableBody>
                   {viewMode === "handled" ? (
                     <>
-                      {loading && handledPolicies.length === 0 ? (
+                      {loadingHandled && handledPolicies.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={12} className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto" />
                         </TableCell>
                       </TableRow>
                     ) : handledPolicies.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                          No handled policies found
+                        </TableCell>
+                      </TableRow>
+                    ) : filteredPolicies.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
                           No handled policies found
@@ -905,31 +969,114 @@ export default function FixedPoliciesPage() {
                         })
                       )}
                     </>
+                  ) : viewMode === "rejected" ? (
+                    <>
+                      {loadingRejected && rejectedPolicies.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={10} className="text-center py-8">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto" />
+                        </TableCell>
+                      </TableRow>
+                    ) : rejectedPolicies.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                          No rejected policies found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      rejectedPolicies
+                        .filter((policy) => {
+                          // Apply search filter
+                          const searchLower = search.toLowerCase().trim();
+                          if (searchLower) {
+                            const matchesSearch = 
+                              (policy.monday_com_deals?.policy_number ?? "").toLowerCase().includes(searchLower) ||
+                              (policy.monday_com_deals?.ghl_name ?? "").toLowerCase().includes(searchLower) ||
+                              (policy.monday_com_deals?.deal_name ?? "").toLowerCase().includes(searchLower) ||
+                              (policy.monday_com_deals?.phone_number ?? "").toLowerCase().includes(searchLower) ||
+                              (policy.retention_agent ?? "").toLowerCase().includes(searchLower) ||
+                              (policy.notes ?? "").toLowerCase().includes(searchLower);
+                            return matchesSearch;
+                          }
+                          return true;
+                        })
+                        .map((policy) => {
+                          return (
+                            <TableRow 
+                              key={policy.submission_id}
+                            >
+                              <TableCell className="font-mono text-sm">
+                                {policy.monday_com_deals?.policy_number ?? policy.policy_number ?? "—"}
+                              </TableCell>
+                              <TableCell>
+                                {policy.monday_com_deals?.ghl_name ?? policy.monday_com_deals?.deal_name ?? "—"}
+                              </TableCell>
+                              <TableCell>{policy.monday_com_deals?.carrier ?? policy.carrier ?? "—"}</TableCell>
+                              <TableCell className="font-medium">{policy.retention_agent ?? "—"}</TableCell>
+                              <TableCell>
+                                <Badge variant="destructive">Rejected</Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="outline">{policy.status ?? "—"}</Badge>
+                              </TableCell>
+                              <TableCell>
+                                {policy.draft_date ? formatEasternDate(policy.draft_date) : "—"}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {formatEasternDate(policy.updated_at)}
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={async () => {
+                                    // Unreject: set policy_status back to 'handled'
+                                    const { error } = await supabase
+                                      .from("retention_deal_flow")
+                                      .update({ policy_status: "handled" })
+                                      .eq("submission_id", policy.submission_id);
+                                    if (!error) {
+                                      toast({
+                                        title: "Success",
+                                        description: "Policy unrejected",
+                                      });
+                                      await loadRejectedPolicies();
+                                    }
+                                  }}
+                                >
+                                  Unreject
+                                </Button>
+                              </TableCell>
+                              <TableCell className="max-w-xs truncate" title={policy.notes ?? ""}>
+                                {policy.notes ?? "—"}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
+                      )}
+                    </>
                   ) : (
                     <>
-                      {loading && fixedPolicies.length === 0 ? (
+                      {loadingFixed && fixedPolicies.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={11} className="text-center py-8">
+                        <TableCell colSpan={10} className="text-center py-8">
                           <Loader2 className="h-6 w-6 animate-spin mx-auto" />
                         </TableCell>
                       </TableRow>
                     ) : filteredPolicies.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                           No fixed policies found
                         </TableCell>
                       </TableRow>
                     ) : (
                       filteredPolicies.map((policy) => {
-                        const draftStatus = getDraftDateStatus(policy.draft_date, policy.status_when_fixed);
                         const currentStatus = getCurrentStatus(policy);
                         const nextStatus = getNextStatus(policy);
-                        const needsAttention = draftStatus.needsConfirmation;
 
                         return (
                           <TableRow 
                             key={policy.id}
-                            className={needsAttention ? "bg-destructive/5 border-l-4 border-l-destructive" : ""}
                           >
                             <TableCell className="font-mono text-sm">
                               {policy.monday_com_deals?.policy_number ?? "—"}
@@ -949,49 +1096,7 @@ export default function FixedPoliciesPage() {
                               <Badge variant={nextStatus !== "—" ? "default" : "secondary"}>{nextStatus}</Badge>
                             </TableCell>
                             <TableCell>
-                              {policy.draft_date ? (
-                                <div className="flex flex-col gap-1">
-                                  <span className="font-medium">{formatEasternDate(policy.draft_date)}</span>
-                                  {draftStatus.isFuture && (
-                                    <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                      <Clock className="h-3 w-3" />
-                                      Future date
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                "—"
-                              )}
-                            </TableCell>
-                              <TableCell>
-                                {policy.draft_date ? (
-                                  <div className="flex flex-col gap-1">
-                                    <Badge 
-                                      variant={
-                                        draftStatus.statusVariant === "warning" 
-                                          ? "default" 
-                                          : draftStatus.statusVariant === "success"
-                                          ? "default"
-                                          : draftStatus.statusVariant === "destructive"
-                                          ? "destructive"
-                                          : draftStatus.statusVariant === "secondary"
-                                          ? "secondary"
-                                          : "default"
-                                      }
-                                      className="w-fit"
-                                    >
-                                      {draftStatus.statusMessage}
-                                    </Badge>
-                                  {draftStatus.confirmationMessage && (
-                                    <div className="text-xs text-destructive font-medium flex items-center gap-1 mt-1">
-                                      <AlertCircle className="h-3 w-3" />
-                                      {draftStatus.confirmationMessage}
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                <Badge variant="secondary">No draft date</Badge>
-                              )}
+                              {policy.draft_date ? formatEasternDate(policy.draft_date) : "—"}
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground">
                               {formatEasternDate(policy.fixed_at)}
@@ -1010,15 +1115,17 @@ export default function FixedPoliciesPage() {
             </div>
 
             {/* Summary */}
-            {filteredPolicies.length > 0 && (
+            {((viewMode === "handled" || viewMode === "fixed") && filteredPolicies.length > 0) || (viewMode === "rejected" && rejectedPolicies.length > 0) ? (
               <div className="text-sm text-muted-foreground">
                 {viewMode === "handled" ? (
                   <>Showing {filteredPolicies.length} handled polic{filteredPolicies.length !== 1 ? "ies" : "y"}</>
+                ) : viewMode === "rejected" ? (
+                  <>Showing {rejectedPolicies.length} rejected polic{rejectedPolicies.length !== 1 ? "ies" : "y"}</>
                 ) : (
                   <>Showing {filteredPolicies.length} of {fixedPolicies.length} fixed polic{filteredPolicies.length !== 1 ? "ies" : "y"}</>
                 )}
               </div>
-            )}
+            ) : null}
           </div>
         </CardContent>
       </Card>

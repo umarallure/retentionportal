@@ -50,6 +50,16 @@ function getCloudTalkConfig(profileId: string): { agentId: string; tagId: string
   return AGENT_CLOUDTALK_MAP.default;
 }
 
+// Base URL for the deployed Retention Portal app
+const RETENTION_PORTAL_BASE_URL = "https://retention-portal-lyart.vercel.app";
+
+/**
+ * Build the external URL for lead details page
+ */
+function buildLeadDetailUrl(dealId: number): string {
+  return `${RETENTION_PORTAL_BASE_URL}/agent/assigned-lead-details?dealId=${dealId}`;
+}
+
 /**
  * Add a contact to CloudTalk with the agent's tag
  * This automatically adds them to the agent's campaign
@@ -59,6 +69,7 @@ export async function addContactToCloudTalk(
   firstName: string,
   lastName: string,
   agentProfileId: string,
+  dealId?: number,
 ): Promise<{ success: boolean; error?: string }> {
   try {
     // Get CloudTalk config for this agent
@@ -98,15 +109,8 @@ export async function addContactToCloudTalk(
     // Build full name
     const fullName = `${firstName || "Unknown"} ${lastName || "Contact"}`.trim();
 
-    // Make request to CloudTalk API
-    // CloudTalk API format: uses ContactNumber array and ContactsTag array with name
-    const response = await fetch("https://my.cloudtalk.io/api/contacts/add.json", {
-      method: "PUT",
-      headers: {
-        Authorization: `Basic ${base64Auth}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    // Build request body
+    const requestBody: Record<string, unknown> = {
         name: fullName,
         ContactNumber: [
           {
@@ -118,7 +122,27 @@ export async function addContactToCloudTalk(
             name: config.tagName, // Use tag name (not ID)
           },
         ],
-      }),
+    };
+
+    // Add ExternalUrl if dealId is provided - this shows as a button in CloudTalk when call connects
+    if (dealId) {
+      requestBody.ExternalUrl = [
+        {
+          name: "Lead Details",
+          url: buildLeadDetailUrl(dealId),
+        },
+      ];
+    }
+
+    // Make request to CloudTalk API
+    // CloudTalk API format: uses ContactNumber array and ContactsTag array with name
+    const response = await fetch("https://my.cloudtalk.io/api/contacts/add.json", {
+      method: "PUT",
+      headers: {
+        Authorization: `Basic ${base64Auth}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
     });
 
     const data = (await response.json()) as CloudTalkContactResponse;

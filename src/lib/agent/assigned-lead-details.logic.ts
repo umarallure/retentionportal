@@ -662,11 +662,13 @@ export function useAssignedLeadDetails() {
             if (!submissionId) return false;
 
             // Check if this submission has already been handled by this agent
+            // Only check for 'handled' status, not 'fixed' or 'rejected'
             const { data: handledEntry } = await supabase
               .from("retention_deal_flow")
               .select("id")
               .eq("submission_id", submissionId)
               .eq("retention_agent", agentName)
+              .eq("policy_status", "handled")
               .limit(1)
               .maybeSingle();
 
@@ -1481,8 +1483,86 @@ export function useAssignedLeadDetails() {
 
   const selectedPolicyView = useMemo(() => {
     if (!selectedPolicyKey) return null;
-    return policyViews.find((p) => p.key === selectedPolicyKey) ?? null;
-  }, [policyViews, selectedPolicyKey]);
+
+    const sel = policyViews.find((p) => p.key === selectedPolicyKey) ?? null;
+    if (!sel) return null;
+
+    const rawDeal = sel.raw ?? null;
+
+    // Helpers to pull fallback values from related deals / leads
+    const fromRelatedDeal = (key: keyof MondayComDeal, current: string): string => {
+      if (current && current.trim().length > 0) return current;
+      if (mondayDeals && mondayDeals.length > 0) {
+        for (const d of mondayDeals) {
+          if (rawDeal && d.id === rawDeal.id) continue;
+          const v = d[key];
+          if (v != null) {
+            const s = typeof v === "number" ? String(v) : String(v);
+            if (s.trim().length > 0) return s;
+          }
+        }
+      }
+      return current;
+    };
+
+    const fromRelatedLead = (key: string, current: string): string => {
+      if (current && current.trim().length > 0) return current;
+      if (allPersonalLeads && allPersonalLeads.length > 0) {
+        for (const l of allPersonalLeads) {
+          const v = getString(l, key);
+          if (v && v.trim().length > 0) return v;
+        }
+      }
+      return current;
+    };
+
+    // Build merged view with fallbacks
+    const merged = { ...sel };
+
+    // Client name
+    merged.clientName =
+      merged.clientName ||
+      (rawDeal?.ghl_name ?? rawDeal?.deal_name ?? "") ||
+      fromRelatedDeal("ghl_name", "") ||
+      fromRelatedDeal("deal_name", "") ||
+      fromRelatedLead("customer_full_name", "") ||
+      name;
+
+    // Carrier
+    merged.carrier =
+      merged.carrier ||
+      rawDeal?.carrier ||
+      fromRelatedDeal("carrier", "") ||
+      fromRelatedLead("carrier", "") ||
+      carrier;
+
+    // Policy number
+    const basePolicyNumber = merged.policyNumber === "—" ? "" : merged.policyNumber;
+    merged.policyNumber =
+      basePolicyNumber ||
+      rawDeal?.policy_number ||
+      fromRelatedDeal("policy_number", "") ||
+      fromRelatedLead("policy_number", "") ||
+      "—";
+
+    // Agent name
+    merged.agentName =
+      merged.agentName ||
+      rawDeal?.sales_agent ||
+      fromRelatedDeal("sales_agent", "") ||
+      fromRelatedLead("agent", "") ||
+      personalAgent ||
+      agent;
+
+    // Call center
+    merged.callCenter =
+      merged.callCenter ||
+      rawDeal?.call_center ||
+      fromRelatedDeal("call_center", "") ||
+      center;
+
+    return merged;
+  }, [policyViews, selectedPolicyKey, mondayDeals, allPersonalLeads, name, carrier, agent, personalAgent, center]);
 
   // State for fetched database data
   const [fetchedDealData, setFetchedDealData] = useState<MondayComDeal | null>(null);

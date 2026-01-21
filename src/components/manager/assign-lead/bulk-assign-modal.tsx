@@ -618,6 +618,7 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
                 phone_number: identity.phone_number,
                 full_name: fullName,
                 agent_profile_id: assignee,
+                deal_id: identity.id, // Include deal_id for external URL in CloudTalk
               }),
             }).catch((err) => {
               console.warn("[CloudTalk] Failed to add contact in bulk:", err);

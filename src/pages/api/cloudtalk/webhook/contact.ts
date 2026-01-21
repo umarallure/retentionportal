@@ -6,7 +6,6 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { supabase } from "@/lib/supabase";
-import { updateLatestContact } from "./latest";
 
 type CloudTalkWebhookRequest = {
   contact: string;
@@ -115,17 +114,8 @@ export default async function handler(
       }
     }
 
-    // Store the contact in a simple cache/state that frontend can access
-    // You can extend this to:
-    // - Store in database table for persistence
-    // - Use Redis for distributed systems
-    // - Use Supabase real-time subscriptions
-    
-    // For now, we'll store it in a way that can be accessed via API
-    // The frontend can poll /api/cloudtalk/webhook/latest or use real-time subscriptions
-    
-    // Store the latest contact for frontend access (async, don't await to avoid blocking)
-    void updateLatestContact(phoneNumber, leadId, dealId);
+    // Note: Webhook polling removed - agents now use External URL button in CloudTalk
+    // to open lead details directly
 
     console.log(`[CloudTalk Webhook] Call answered for: ${phoneNumber}`, {
       leadId,

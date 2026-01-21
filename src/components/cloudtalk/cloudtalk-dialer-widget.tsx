@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/router";
 import { PhoneIcon, XIcon, Minimize2Icon } from "lucide-react";
 
 import { useAccess } from "@/components/access-context";
@@ -8,12 +9,17 @@ import { useDashboard } from "@/components/dashboard-context";
 import { Button } from "@/components/ui/button";
 
 export function CloudTalkDialerWidget() {
+  const router = useRouter();
   const { access } = useAccess();
   const { dialerOpen, setDialerOpen } = useDashboard();
   const [isMinimized, setIsMinimized] = React.useState(false);
 
-  // Only show for agents
-  if (!access.isAgent) {
+  // Hide on pages where dialer is embedded or not needed
+  const isDialerPage = router.pathname === "/agent/dialer";
+  const isLeadDetailsPage = router.pathname === "/agent/assigned-lead-details";
+
+  // Only show for agents, and not on dialer or lead details page
+  if (!access.isAgent || isDialerPage || isLeadDetailsPage) {
     return null;
   }
 

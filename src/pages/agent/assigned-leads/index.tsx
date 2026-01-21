@@ -265,13 +265,14 @@ export default function AssignedLeadsPage() {
 
       const agentName = agentProfile?.display_name;
 
-      // Get all handled submission IDs for this agent
+      // Get all handled submission IDs for this agent (only 'handled' status, not 'fixed' or 'rejected')
       let handledSubmissionIds = new Set<string>();
       if (agentName) {
         const { data: handledData } = await supabase
           .from("retention_deal_flow")
           .select("submission_id")
-          .eq("retention_agent", agentName);
+          .eq("retention_agent", agentName)
+          .eq("policy_status", "handled");
 
         handledSubmissionIds = new Set(
           (handledData ?? []).map((h) => (h.submission_id as string)?.trim()).filter(Boolean)

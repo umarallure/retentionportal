@@ -415,6 +415,7 @@ export function CarrierRequirementsWorkflow({
             agent: finalSalesAgent, // Sales agent from policy
             from_callback: true,
             status: shortFormStatus,
+            policy_status: "handled", // Mark as handled when agent completes workflow
             notes: shortFormNotes,
             policy_number: finalPolicyNumber,
             carrier: finalCarrier,
@@ -428,6 +429,31 @@ export function CarrierRequirementsWorkflow({
 
       if (ddfError) throw ddfError;
 
+      // Mark the assigned lead as handled
+      if (deal.dealId) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.user) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("id")
+            .eq("user_id", session.user.id)
+            .maybeSingle();
+
+          if (profile?.id) {
+            // Update the assignment status to 'handled'
+            await supabase
+              .from("retention_assigned_leads")
+              .update({ status: "handled" })
+              .eq("deal_id", deal.dealId)
+              .eq("assignee_profile_id", profile.id)
+              .eq("status", "active");
+          }
+        }
+      }
+
       // Note: Policy is now tracked as "handled" in retention_deal_flow
       // Manager or agent can mark it as "fixed" later via the fixed policies page
       console.log("[workflow] Policy handled - can be marked as fixed later:", {
@@ -437,7 +463,17 @@ export function CarrierRequirementsWorkflow({
       });
 
       toast({ title: "Success", description: "Call result updated successfully" });
-      await router.push("/agent/assigned-leads");
+      
+      // If opened from CloudTalk (new tab), close the tab to return to dialer
+      if (typeof window !== "undefined" && window.opener !== null) {
+        // Small delay to show success toast, then close
+        setTimeout(() => {
+          window.close();
+        }, 1000);
+      } else {
+        // Otherwise navigate normally
+        await router.push("/agent/assigned-leads");
+      }
     } catch {
       toast({ title: "Error", description: "Failed to save call result", variant: "destructive" });
     } finally {

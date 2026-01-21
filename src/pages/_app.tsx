@@ -11,8 +11,6 @@ import { DashboardProvider } from "@/components/dashboard-context";
 import { AccessGate, AccessProvider } from "@/components/access-context";
 import { CommandPalette } from "@/components/command-palette";
 import { NotificationsSlideover } from "@/components/notifications-slideover";
-import { CloudTalkWidget } from "@/components/cloudtalk/cloudtalk-widget";
-import { CloudTalkDialerWidget } from "@/components/cloudtalk/cloudtalk-dialer-widget";
 import { CloudTalkWebhookListener } from "@/components/cloudtalk/cloudtalk-webhook-listener";
 import { supabase } from "@/lib/supabase";
 import { ToastContainer } from "react-toastify";
@@ -109,8 +107,6 @@ export default function App({ Component, pageProps }: AppProps) {
                   </DashboardShell>
                 </AccessGate>
               )}
-              {isAuthPage ? null : <CloudTalkWidget />}
-              {isAuthPage ? null : <CloudTalkDialerWidget />}
               {isAuthPage ? null : <CloudTalkWebhookListener />}
               <CommandPalette />
               <NotificationsSlideover />
