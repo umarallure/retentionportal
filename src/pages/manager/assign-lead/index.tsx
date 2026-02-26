@@ -560,6 +560,20 @@ export default function ManagerAssignLeadPage() {
     if (!activeUnassign?.assignmentId) return;
     setUnassigning(true);
     try {
+      // Best-effort VICIdial cleanup so unassigned leads are removed there too.
+      try {
+        await fetch("/api/vicidial/unassign-lead", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            deal_id: activeUnassign.row.deal_id ?? undefined,
+            phone_number: activeUnassign.row.phone_number ?? undefined,
+          }),
+        });
+      } catch (vicidialCleanupError) {
+        console.warn("[VICIdial] Unassign cleanup failed (non-blocking):", vicidialCleanupError);
+      }
+
       const { error } = await supabase
         .from("retention_assigned_leads")
         .delete()

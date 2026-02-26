@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import mysql from "mysql2/promise";
 import { callVicidialAssignmentApi, type VicidialParams } from "@/lib/vicidial";
 import { buildLeadDetailsUrl, getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
 
@@ -110,6 +111,63 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       comments: comments || undefined,
       ...(body.extra_params ?? {}),
     };
+
+    // Deduplicate by (list_id + vendor_lead_code/deal_id) before add_lead.
+    // Read-only DB lookup, write still happens via VICIdial API.
+    const vendorCode = params.vendor_lead_code != null ? String(params.vendor_lead_code) : "";
+    const listIdStr = params.list_id != null ? String(params.list_id) : "";
+    const dbHost = process.env.VICIDIAL_DB_HOST;
+    const dbUser = process.env.VICIDIAL_DB_USER;
+    const dbPass = process.env.VICIDIAL_DB_PASS;
+    const dbName = process.env.VICIDIAL_DB_NAME;
+    const dbPort = Number(process.env.VICIDIAL_DB_PORT ?? "3306");
+
+    if (vendorCode && listIdStr && dbHost && dbUser && dbName) {
+      let conn: mysql.Connection | null = null;
+      try {
+        conn = await mysql.createConnection({
+          host: dbHost,
+          user: dbUser,
+          password: dbPass ?? undefined,
+          database: dbName,
+          port: dbPort,
+        });
+        const [rows] = await conn.query(
+          `SELECT lead_id, status
+           FROM vicidial_list
+           WHERE list_id = ? AND vendor_lead_code = ?
+           ORDER BY lead_id DESC
+           LIMIT 1`,
+          [listIdStr, vendorCode],
+        );
+
+        const existing = (rows as Array<{ lead_id?: number; status?: string }>)[0];
+        const existingLeadId = typeof existing?.lead_id === "number" ? existing.lead_id : null;
+        if (existingLeadId) {
+          const update = await callVicidialAssignmentApi("update_lead", {
+            lead_id: existingLeadId,
+            phone_number: params.phone_number,
+            first_name: params.first_name,
+            last_name: params.last_name,
+            status: existing?.status === "ERI" ? "NEW" : existing?.status ?? "NEW",
+            comments: params.comments,
+          });
+          if (!/\bERROR\b/i.test(update.raw)) {
+            return res.status(200).json({
+              ok: true,
+              status: 200,
+              function: "update_lead",
+              raw: `SUCCESS: reused existing VICIdial lead_id=${existingLeadId}`,
+              parsed: { SUCCESS: `reused existing VICIdial lead_id=${existingLeadId}` },
+            });
+          }
+        }
+      } catch (e) {
+        console.warn("[VICIdial] dedupe lookup failed, falling back to add_lead:", e);
+      } finally {
+        if (conn) await conn.end();
+      }
+    }
 
     const result = await callVicidialAssignmentApi(fn, params);
     const vicidialError = result.parsed.ERROR ?? (/\bERROR\b/i.test(result.raw) ? result.raw.trim() : null);

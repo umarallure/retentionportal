@@ -13,7 +13,6 @@ import {
   RefreshCwIcon,
   UsersIcon,
   PlayCircleIcon,
-  CheckCircle2Icon,
   ClockIcon,
   Loader2Icon,
 } from "lucide-react";
@@ -487,25 +486,6 @@ export default function AgentDialerDashboard() {
           </CardContent>
         </Card>
 
-        {/* Quick Tips */}
-        <Card className="flex-shrink-0">
-          <CardContent className="pt-4 pb-3">
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <div className="flex items-start gap-2">
-                <CheckCircle2Icon className="h-3.5 w-3.5 mt-0.5 text-green-500 flex-shrink-0" />
-                <span>When call connects, open <strong>&quot;Lead Details&quot;</strong> from the queue</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <CheckCircle2Icon className="h-3.5 w-3.5 mt-0.5 text-green-500 flex-shrink-0" />
-                <span>Details open in new tab - call stays active here</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <CheckCircle2Icon className="h-3.5 w-3.5 mt-0.5 text-green-500 flex-shrink-0" />
-                <span>Verify info, update disposition, then return to dialer</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Right Panel - VICIdial (Full Height) */}
