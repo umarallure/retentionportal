@@ -18,7 +18,7 @@ type DialRequestBody = {
 
 type VicidialRouteResponse =
   | {
-      ok: true;
+      ok: boolean;
       status: number;
       function: string;
       raw: string;

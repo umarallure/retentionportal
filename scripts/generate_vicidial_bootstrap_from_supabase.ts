@@ -15,6 +15,7 @@ type RetentionAgentRow = {
 type BootstrapAgent = {
   profileId: string;
   campaignId: string;
+  campaignName?: string;
   listId: string;
   vicidialUser?: string;
   listName?: string;

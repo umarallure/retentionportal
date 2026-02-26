@@ -96,7 +96,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const mapping = getVicidialAgentMapping(agentProfileId || null);
     const dealId = body.deal_id != null ? String(body.deal_id).trim() : "";
     const phone = normalizePhone(body.phone_number);
-    const listId = body.list_id != null ? String(body.list_id).trim() : mapping?.listId ?? "";
+    const listId = body.list_id != null ? String(body.list_id).trim() : String(mapping?.listId ?? "").trim();
     const statusSet = process.env.VICIDIAL_UNASSIGN_STATUS ?? "ERI";
 
     if (!assignmentId && !dealId && !phone) {

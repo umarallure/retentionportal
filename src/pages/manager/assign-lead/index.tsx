@@ -562,12 +562,13 @@ export default function ManagerAssignLeadPage() {
     try {
       // Best-effort VICIdial cleanup so unassigned leads are removed there too.
       try {
+        const rowLeadId = activeUnassign.row.lead_id;
         await fetch("/api/vicidial/unassign-lead", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             assignment_id: activeUnassign.assignmentId,
-            agent_profile_id: currentAssignmentForLead(activeUnassign.row.lead_id)?.assignee_profile_id ?? undefined,
+            agent_profile_id: rowLeadId ? currentAssignmentForLead(rowLeadId)?.assignee_profile_id ?? undefined : undefined,
             deal_id: activeUnassign.row.deal_id ?? undefined,
             phone_number: activeUnassign.row.phone_number ?? undefined,
           }),
