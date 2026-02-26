@@ -64,7 +64,8 @@ export default function AgentDialerDashboard() {
   const [vicidialRaw, setVicidialRaw] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [sessionActive] = useState(false);
+  const [sessionActive, setSessionActive] = useState(false);
+  const [sessionUpdating, setSessionUpdating] = useState(false);
   const [callingLeadId, setCallingLeadId] = useState<string | null>(null);
 
   const vicidialUrl = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_URL || process.env.NEXT_PUBLIC_VICIDIAL_URL || "";
@@ -145,6 +146,70 @@ export default function AgentDialerDashboard() {
     void loadQueue();
   };
 
+  const handleStartSession = async () => {
+    if (!vicidialAgentUser) {
+      console.error("[dialer] Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      return;
+    }
+    setSessionUpdating(true);
+    try {
+      const response = await fetch("/api/vicidial/agent-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_user: vicidialAgentUser,
+          status: "READY",
+          campaign_id: vicidialCampaignId,
+        }),
+      });
+      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.raw || "Failed to set agent READY");
+      }
+      setSessionActive(true);
+    } catch (error) {
+      console.error("[dialer] Failed to start session", error);
+    } finally {
+      setSessionUpdating(false);
+    }
+  };
+
+  const handleEndSession = async () => {
+    if (!vicidialAgentUser) {
+      console.error("[dialer] Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      return;
+    }
+    setSessionUpdating(true);
+    try {
+      await fetch("/api/vicidial/hangup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_user: vicidialAgentUser,
+          campaign_id: vicidialCampaignId,
+        }),
+      });
+      const response = await fetch("/api/vicidial/agent-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_user: vicidialAgentUser,
+          status: "PAUSE",
+          campaign_id: vicidialCampaignId,
+        }),
+      });
+      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      if (!response.ok || result.ok === false) {
+        throw new Error(result.raw || "Failed to pause agent");
+      }
+      setSessionActive(false);
+    } catch (error) {
+      console.error("[dialer] Failed to end session", error);
+    } finally {
+      setSessionUpdating(false);
+    }
+  };
+
   const handleDialLead = async (lead: QueueLeadRow) => {
     if (!vicidialAgentUser) {
       console.error("[dialer] Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
@@ -218,6 +283,45 @@ export default function AgentDialerDashboard() {
   const openLeadsView = () => {
     setRightView("vicidial-leads");
     void loadVicidialLeads();
+  };
+
+  const formatVicidialDate = (value?: string) => {
+    if (!value) return "-";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString();
+  };
+
+  const extractLeadDetailsUrl = (comments?: string) => {
+    if (!comments) return null;
+    const match = comments.match(/Lead Details:\s*(https?:\/\/\S+)/i);
+    return match?.[1] ?? null;
+  };
+
+  const getStatusTone = (status?: string) => {
+    const s = (status ?? "").toUpperCase();
+    if (["SALE", "CLOSER", "CBHOLD", "XFER"].includes(s)) {
+      return {
+        card: "border-emerald-200 bg-emerald-50/60",
+        badge: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      };
+    }
+    if (["NEW", "ERI", "CALLBK"].includes(s)) {
+      return {
+        card: "border-sky-200 bg-sky-50/60",
+        badge: "bg-sky-100 text-sky-800 border-sky-200",
+      };
+    }
+    if (["DNC", "DROP", "N", "NA"].includes(s)) {
+      return {
+        card: "border-rose-200 bg-rose-50/60",
+        badge: "bg-rose-100 text-rose-800 border-rose-200",
+      };
+    }
+    return {
+      card: "border-amber-200 bg-amber-50/60",
+      badge: "bg-amber-100 text-amber-800 border-amber-200",
+    };
   };
 
   return (
@@ -350,13 +454,21 @@ export default function AgentDialerDashboard() {
                   Back To Dialer
                 </Button>
               )}
+              <Button
+                variant={sessionActive ? "secondary" : "default"}
+                size="sm"
+                onClick={() => void (sessionActive ? handleEndSession() : handleStartSession())}
+                disabled={sessionUpdating}
+              >
+                {sessionUpdating ? (sessionActive ? "Ending..." : "Starting...") : (sessionActive ? "End Session" : "Start Session")}
+              </Button>
               <Badge variant={sessionActive ? "default" : "secondary"}>
                 {sessionActive ? "Active" : "Inactive"}
               </Badge>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="flex-1 p-0 relative">
+        <CardContent className="flex-1 min-h-0 p-0 relative">
           {rightView === "dialer" ? (
             vicidialUrl ? (
               <iframe
@@ -371,7 +483,7 @@ export default function AgentDialerDashboard() {
               </div>
             )
           ) : (
-            <div className="h-full overflow-auto p-4 space-y-3">
+            <div className="h-full min-h-0 p-4 flex flex-col gap-3 overflow-hidden">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium">VICIdial Leads</div>
                 <Button variant="ghost" size="sm" onClick={() => void loadVicidialLeads()} disabled={vicidialLeadsLoading}>
@@ -379,38 +491,75 @@ export default function AgentDialerDashboard() {
                   Refresh
                 </Button>
               </div>
-              {vicidialLeadsError ? <div className="text-sm text-destructive">{vicidialLeadsError}</div> : null}
-              {vicidialLeadsLoading ? (
-                <div className="text-sm text-muted-foreground">Loading leads...</div>
-              ) : vicidialLeads.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No leads returned from VICIdial API.</div>
-              ) : (
-                <div className="space-y-2">
-                  {vicidialLeads.map((lead, idx) => (
-                    <div key={`${lead.lead_id ?? "row"}-${idx}`} className="rounded border p-2 text-xs">
-                      <div className="font-medium">
-                        Lead #{lead.lead_id ?? "-"} {lead.phone_number ? `• ${lead.phone_number}` : ""}{" "}
-                        {(lead.first_name || lead.last_name) ? `• ${lead.first_name ?? ""} ${lead.last_name ?? ""}`.trim() : ""}
+              {vicidialLeadsError ? <div className="text-sm text-destructive flex-shrink-0">{vicidialLeadsError}</div> : null}
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+                <div className="space-y-2 pb-2">
+                {vicidialLeadsLoading ? (
+                  <div className="text-sm text-muted-foreground">Loading leads...</div>
+                ) : vicidialLeads.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No leads returned from VICIdial API.</div>
+                ) : (
+                  vicidialLeads.map((lead, idx) => {
+                    const tone = getStatusTone(lead.status);
+                    const hasLocation = Boolean(lead.city || lead.state || lead.postal_code);
+                    const location = [lead.city, lead.state, lead.postal_code].filter(Boolean).join(" ");
+                    return (
+                    <div key={`${lead.lead_id ?? "row"}-${idx}`} className={`rounded-lg border p-3 text-sm ${tone.card}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-lg font-semibold truncate">
+                            {`${lead.first_name ?? ""} ${lead.last_name ?? ""}`.trim() || "Unknown Lead"}
+                          </div>
+                          <div className="text-base text-muted-foreground">
+                            Lead #{lead.lead_id ?? "-"} {lead.phone_number ? `• ${lead.phone_number}` : ""}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <Badge variant="outline" className={`text-sm ${tone.badge}`}>
+                            {lead.status ?? "-"}
+                          </Badge>
+                          <Badge variant="secondary" className="text-sm bg-white/90 border border-border">
+                            List {lead.list_id ?? "-"}
+                          </Badge>
+                        </div>
                       </div>
-                      <div className="text-muted-foreground">
-                        Status: {lead.status ?? "-"} • List: {lead.list_id ?? "-"}
+
+                      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1.5 text-base text-muted-foreground">
+                        <div>Vendor: {lead.vendor_lead_code ?? "-"}</div>
+                        {hasLocation ? <div>{location}</div> : null}
+                        <div>Entry: {formatVicidialDate(lead.entry_date)}</div>
+                        <div>Last Call: {formatVicidialDate(lead.last_local_call_time)}</div>
                       </div>
-                      <div className="text-muted-foreground">
-                        Vendor Code: {lead.vendor_lead_code ?? "-"} • Source: {lead.source_id ?? "-"} • Called: {lead.called_count ?? "0"}
-                      </div>
-                      <div className="text-muted-foreground">
-                        {lead.city ?? "-"}, {lead.state ?? "-"} {lead.postal_code ?? ""} • {lead.email ?? "no-email"}
-                      </div>
-                      <div className="text-muted-foreground">
-                        Entry: {lead.entry_date ?? "-"} • Last Call: {lead.last_local_call_time ?? "-"}
-                      </div>
-                      {lead.comments ? <div className="mt-1 whitespace-pre-wrap">{lead.comments}</div> : null}
+
+                      {extractLeadDetailsUrl(lead.comments) ? (
+                        <div className="mt-2">
+                          <a
+                            href={extractLeadDetailsUrl(lead.comments) ?? "#"}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-base text-primary hover:underline"
+                          >
+                            <ExternalLinkIcon className="h-3.5 w-3.5" />
+                            Open Lead Details
+                          </a>
+                        </div>
+                      ) : null}
+
+                      {lead.comments ? (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-base text-muted-foreground">Notes</summary>
+                          <div className="mt-1 whitespace-pre-wrap text-base text-muted-foreground">
+                            {lead.comments.length > 240 ? `${lead.comments.slice(0, 240)}...` : lead.comments}
+                          </div>
+                        </details>
+                      ) : null}
                     </div>
-                  ))}
+                  )})
+                )}
                 </div>
-              )}
+              </div>
               {vicidialRaw ? (
-                <details className="text-xs">
+                <details className="text-xs flex-shrink-0">
                   <summary className="cursor-pointer text-muted-foreground">Raw VICIdial response</summary>
                   <pre className="mt-2 max-h-60 overflow-auto rounded border p-2">{vicidialRaw}</pre>
                 </details>
