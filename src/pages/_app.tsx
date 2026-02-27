@@ -15,6 +15,7 @@ import { supabase } from "@/lib/supabase";
 import { ToastContainer } from "react-toastify";
 import { useTheme } from "next-themes";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { PersistentVicidialIframe } from "@/components/vicidial/persistent-iframe";
 
 const publicSans = Public_Sans({
   subsets: ["latin"],
@@ -106,6 +107,7 @@ export default function App({ Component, pageProps }: AppProps) {
                   </DashboardShell>
                 </AccessGate>
               )}
+              <PersistentVicidialIframe />
               <CommandPalette />
               <NotificationsSlideover />
               <Toaster />

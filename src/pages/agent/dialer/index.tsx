@@ -672,31 +672,10 @@ export default function AgentDialerDashboard() {
           </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 p-0 relative">
-          {/* Persistent VICIdial iframe so login/session stay alive between modes */}
-          {vicidialUrl ? (
-            <iframe
-              src={vicidialUrl}
-              allow="microphone; autoplay; speaker-selection; camera"
-              className={
-                vicidialMode === "native"
-                  ? "absolute inset-0 w-full h-full border-0"
-                  : "absolute inset-0 w-0 h-0 opacity-0 pointer-events-none"
-              }
-              title="VICIdial Agent"
-            />
-          ) : null}
-
+          {/* Anchor div: the persistent iframe in _app.tsx positions itself over this element */}
           {rightView === "dialer" ? (
             vicidialUrl ? (
-              // Portal Dialer wrapper commented out for now – only Vicidial Screen (iframe) is shown
-              // vicidialMode === "native" ? null : (
-              //   <div className="relative h-full flex flex-col">
-              //     <div className="flex-1 min-h-0">
-              //       <VicidialWrapper ... />
-              //     </div>
-              //   </div>
-              // )
-              null
+              <div id="vicidial-iframe-anchor" className="absolute inset-0" />
             ) : (
               <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
                 Missing <code className="mx-1">NEXT_PUBLIC_VICIDIAL_AGENT_URL</code> env var.
