@@ -68,12 +68,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     };
 
     const result = await callVicidialAgentApi(fn, params);
+    // Vicidial often returns HTTP 200 with body "ERROR: ..." when the request is rejected
+    const vicidialError =
+      (result.raw && /^\s*ERROR\s*:/im.test(result.raw)) || result.parsed?.ERROR;
+    const ok = result.ok && !vicidialError;
+    const errorMessage = vicidialError
+      ? (result.parsed?.ERROR ?? result.raw?.split("\n")[0]?.trim() ?? "VICIdial returned an error")
+      : undefined;
     return res.status(result.status).json({
-      ok: result.ok,
+      ok,
       status: result.status,
       function: fn,
       raw: result.raw,
       parsed: result.parsed,
+      ...(errorMessage && !ok ? { error: errorMessage, message: errorMessage } : {}),
     });
   } catch (error) {
     return res.status(500).json({

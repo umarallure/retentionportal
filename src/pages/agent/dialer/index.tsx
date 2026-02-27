@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,9 @@ import {
   Loader2Icon,
 } from "lucide-react";
 import { getDealLabelStyle, getDealTagLabelFromGhlStage } from "@/lib/monday-deal-category-tags";
+import { VicidialWrapper, type VicidialWrapperHandle } from "@/components/vicidial/vicidial-wrapper";
+import { getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
+import { useToast } from "@/hooks/use-toast";
 
 type QueueLeadRow = {
   id: string;
@@ -54,6 +57,18 @@ type VicidialLeadRow = {
   raw: string;
 };
 
+type HopperRow = {
+  hopper_order: string;
+  priority: string;
+  lead_id: string;
+  list_id: string;
+  phone_number: string;
+  status: string;
+  last_call_time: string;
+  first_name?: string;
+  last_name?: string;
+};
+
 export default function AgentDialerDashboard() {
   const [queueLeads, setQueueLeads] = useState<QueueLeadRow[]>([]);
   const [profileId, setProfileId] = useState<string | null>(null);
@@ -67,11 +82,46 @@ export default function AgentDialerDashboard() {
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionUpdating, setSessionUpdating] = useState(false);
   const [callingLeadId, setCallingLeadId] = useState<string | null>(null);
-  const [iframeMediaEnabled, setIframeMediaEnabled] = useState(false);
+  const vicidialAgentUser = "hussain_khan";
+  const defaultVicidialCampaignId = process.env.NEXT_PUBLIC_VICIDIAL_CAMPAIGN_ID || "ret1cda9";
 
-  const vicidialUrl = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_URL || process.env.NEXT_PUBLIC_VICIDIAL_URL || "";
-  const vicidialAgentUser = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_USER || "";
-  const vicidialCampaignId = process.env.NEXT_PUBLIC_VICIDIAL_CAMPAIGN_ID || undefined;
+  const [vicidialCampaignId, setVicidialCampaignId] = useState<string | undefined>(() => {
+    if (typeof window === "undefined") return defaultVicidialCampaignId || undefined;
+    try {
+      const saved = localStorage.getItem("retention_portal_vicidial_campaign");
+      if (saved?.trim()) return saved.trim();
+    } catch {}
+    return defaultVicidialCampaignId || undefined;
+  });
+  const [vicidialMode, setVicidialMode] = useState<"native" | "wrapper">("native");
+  const vicidialBaseUrl =
+    process.env.NEXT_PUBLIC_VICIDIAL_AGENT_URL || process.env.NEXT_PUBLIC_VICIDIAL_URL || "";
+
+  // Persist campaign to localStorage so iframe and hopper keep same campaign on reload
+  useEffect(() => {
+    if (!vicidialCampaignId) return;
+    try {
+      localStorage.setItem("retention_portal_vicidial_campaign", vicidialCampaignId);
+    } catch {}
+  }, [vicidialCampaignId]);
+
+  // Build iframe URL with VD_campaign and VD_login so VICIdial login form stays pre-filled on reload
+  const vicidialUrl = (() => {
+    if (!vicidialBaseUrl) return "";
+    try {
+      const u = new URL(vicidialBaseUrl);
+      if (vicidialCampaignId) u.searchParams.set("VD_campaign", vicidialCampaignId);
+      u.searchParams.set("VD_login", vicidialAgentUser);
+      return u.toString();
+    } catch {
+      return vicidialBaseUrl;
+    }
+  })();
+  const { toast } = useToast();
+  const vicidialWrapperRef = useRef<VicidialWrapperHandle | null>(null);
+  const [hopperRows, setHopperRows] = useState<HopperRow[]>([]);
+  const [hopperLoading, setHopperLoading] = useState(false);
+  const [hopperError, setHopperError] = useState<string | null>(null);
 
   // Load assigned leads queue
   const loadQueue = useCallback(async () => {
@@ -142,6 +192,14 @@ export default function AgentDialerDashboard() {
     void loadQueue();
   }, [loadQueue]);
 
+  useEffect(() => {
+    if (!profileId) return;
+    const mapping = getVicidialAgentMapping(profileId);
+    if (mapping?.campaignId) {
+      setVicidialCampaignId(mapping.campaignId);
+    }
+  }, [profileId]);
+
   const handleRefresh = () => {
     setRefreshing(true);
     void loadQueue();
@@ -149,7 +207,7 @@ export default function AgentDialerDashboard() {
 
   const handleStartSession = async () => {
     if (!vicidialAgentUser) {
-      console.error("[dialer] Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      console.error("[dialer] Missing VICIdial agent user");
       return;
     }
     setSessionUpdating(true);
@@ -163,13 +221,21 @@ export default function AgentDialerDashboard() {
           campaign_id: vicidialCampaignId,
         }),
       });
-      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      const result = (await response.json()) as { ok?: boolean; raw?: string; error?: string; message?: string };
       if (!response.ok || result.ok === false) {
-        throw new Error(result.raw || "Failed to set agent READY");
+        const msg = result.message ?? result.error ?? result.raw ?? "Failed to set agent READY";
+        throw new Error(msg);
       }
       setSessionActive(true);
+      setVicidialMode("wrapper");
+      toast({ title: "Session started", description: "You are now active (READY)." });
     } catch (error) {
       console.error("[dialer] Failed to start session", error);
+      toast({
+        variant: "destructive",
+        title: "Could not go active",
+        description: error instanceof Error ? error.message : "Failed to set agent READY",
+      });
     } finally {
       setSessionUpdating(false);
     }
@@ -177,7 +243,7 @@ export default function AgentDialerDashboard() {
 
   const handleEndSession = async () => {
     if (!vicidialAgentUser) {
-      console.error("[dialer] Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      console.error("[dialer] Missing VICIdial agent user");
       return;
     }
     setSessionUpdating(true);
@@ -199,13 +265,21 @@ export default function AgentDialerDashboard() {
           campaign_id: vicidialCampaignId,
         }),
       });
-      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      const result = (await response.json()) as { ok?: boolean; raw?: string; error?: string; message?: string };
       if (!response.ok || result.ok === false) {
-        throw new Error(result.raw || "Failed to pause agent");
+        const msg = result.message ?? result.error ?? result.raw ?? "Failed to pause agent";
+        throw new Error(msg);
       }
       setSessionActive(false);
+      vicidialWrapperRef.current?.notifyExternalHangup();
+      toast({ title: "Session paused", description: "You are now paused." });
     } catch (error) {
       console.error("[dialer] Failed to end session", error);
+      toast({
+        variant: "destructive",
+        title: "Could not pause",
+        description: error instanceof Error ? error.message : "Failed to pause agent",
+      });
     } finally {
       setSessionUpdating(false);
     }
@@ -213,16 +287,37 @@ export default function AgentDialerDashboard() {
 
   const handleDialLead = async (lead: QueueLeadRow) => {
     if (!vicidialAgentUser) {
-      console.error("[dialer] Missing NEXT_PUBLIC_VICIDIAL_AGENT_USER");
+      console.error("[dialer] Missing VICIdial agent user");
+      toast({
+        variant: "destructive",
+        title: "Cannot dial",
+        description: "Missing VICIdial agent user configuration.",
+      });
       return;
     }
     const phone = lead.deal?.phone_number?.trim();
     if (!phone) {
       console.error("[dialer] Selected lead has no phone number");
+      toast({
+        variant: "destructive",
+        title: "Cannot dial",
+        description: "Selected lead has no phone number.",
+      });
       return;
     }
     setCallingLeadId(lead.id);
     try {
+      // Ensure agent is paused before manual dial, per VICIdial expectations.
+      await fetch("/api/vicidial/agent-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_user: vicidialAgentUser,
+          status: "PAUSE",
+          campaign_id: vicidialCampaignId,
+        }),
+      });
+
       const response = await fetch("/api/vicidial/dial", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -232,12 +327,24 @@ export default function AgentDialerDashboard() {
           campaign_id: vicidialCampaignId,
         }),
       });
-      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      const result = (await response.json()) as { ok?: boolean; raw?: string; error?: string };
       if (!response.ok || result.ok === false) {
-        throw new Error(result.raw || "Failed to dial");
+        throw new Error(result.raw || result.error || "Failed to dial");
       }
+      vicidialWrapperRef.current?.notifyExternalDial(phone);
+      toast({
+        variant: "success",
+        title: "Dialing",
+        description: `Dial command sent for ${phone}`,
+      });
     } catch (error) {
       console.error("[dialer] Failed to dial", error);
+      const msg = error instanceof Error ? error.message : "Failed to dial lead.";
+      toast({
+        variant: "destructive",
+        title: "Dial failed",
+        description: msg,
+      });
     } finally {
       setCallingLeadId(null);
     }
@@ -324,6 +431,45 @@ export default function AgentDialerDashboard() {
       badge: "bg-amber-100 text-amber-800 border-amber-200",
     };
   };
+
+  const loadHopper = useCallback(async () => {
+    if (!vicidialCampaignId) {
+      setHopperError("No campaign selected.");
+      setHopperRows([]);
+      return;
+    }
+
+    setHopperLoading(true);
+    setHopperError(null);
+
+    try {
+      const response = await fetch("/api/vicidial/hopper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaign_id: vicidialCampaignId }),
+      });
+
+      const result = (await response.json()) as
+        | { ok: true; rows: HopperRow[]; raw: string }
+        | { ok: false; error: string; raw?: string };
+
+      if (!response.ok || !("ok" in result) || result.ok === false) {
+        const msg = "error" in result && result.error ? result.error : "Failed to load hopper";
+        throw new Error(msg);
+      }
+
+      setHopperRows(result.rows);
+    } catch (error) {
+      setHopperRows([]);
+      setHopperError(error instanceof Error ? error.message : "Failed to load hopper.");
+    } finally {
+      setHopperLoading(false);
+    }
+  }, [vicidialCampaignId]);
+
+  useEffect(() => {
+    void loadHopper();
+  }, [loadHopper]);
 
   return (
     <div className="flex h-[calc(100vh-4rem)] gap-4 p-4">
@@ -435,6 +581,62 @@ export default function AgentDialerDashboard() {
           </CardContent>
         </Card>
 
+        {/* Campaign Hopper - small scrollable section */}
+        <Card className="flex flex-col">
+          <CardHeader className="py-2 px-4 flex items-center justify-between">
+            <CardTitle className="text-sm">Campaign Hopper</CardTitle>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="h-7 w-7"
+              onClick={() => void loadHopper()}
+              disabled={hopperLoading}
+            >
+              <RefreshCwIcon className={`h-4 w-4 ${hopperLoading ? "animate-spin" : ""}`} />
+            </Button>
+          </CardHeader>
+          <CardContent className="pb-3 px-0">
+            <div className="px-4">
+              {hopperError ? (
+                <div className="text-xs text-destructive pb-1">{hopperError}</div>
+              ) : null}
+            </div>
+            <div className="max-h-48 overflow-y-auto px-4 space-y-1 text-xs">
+              {hopperLoading ? (
+                <div className="text-muted-foreground py-2">Loading hopper…</div>
+              ) : hopperRows.length === 0 ? (
+                <div className="text-muted-foreground py-2">
+                  No leads in hopper for this campaign.
+                </div>
+              ) : (
+                hopperRows.map((row) => (
+                  <div
+                    key={`${row.lead_id}-${row.phone_number}-${row.hopper_order}`}
+                    className="flex items-center justify-between rounded border bg-card px-2 py-1"
+                  >
+                    <div className="flex flex-col min-w-0">
+                      <span className="font-medium truncate">
+                        {[row.first_name, row.last_name].filter(Boolean).join(" ") || "Unknown Lead"}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground truncate">
+                        {row.phone_number || "No phone"}
+                      </span>
+                    </div>
+                    <div className="flex flex-col items-end ml-2">
+                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                        {row.status || "NEW"}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground mt-0.5">
+                        P{row.priority ?? "0"}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
       </div>
 
       {/* Right Panel - VICIdial (Full Height) */}
@@ -459,7 +661,7 @@ export default function AgentDialerDashboard() {
                 variant={sessionActive ? "secondary" : "default"}
                 size="sm"
                 onClick={() => void (sessionActive ? handleEndSession() : handleStartSession())}
-                disabled={sessionUpdating}
+                disabled={sessionUpdating || !vicidialAgentUser}
               >
                 {sessionUpdating ? (sessionActive ? "Ending..." : "Starting...") : (sessionActive ? "End Session" : "Start Session")}
               </Button>
@@ -470,27 +672,10 @@ export default function AgentDialerDashboard() {
           </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 p-0 relative">
+          {/* Anchor div: the persistent iframe in _app.tsx positions itself over this element */}
           {rightView === "dialer" ? (
             vicidialUrl ? (
-              iframeMediaEnabled ? (
-                <iframe
-                  src={vicidialUrl}
-                  allow="microphone; autoplay; speaker-selection; camera"
-                  className="absolute inset-0 w-full h-full border-0"
-                  title="VICIdial Agent"
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center p-6">
-                  <div className="max-w-md text-center space-y-3">
-                    <div className="text-sm text-muted-foreground">
-                      Click once to enable voice permissions for the embedded VICIdial webphone.
-                    </div>
-                    <Button onClick={() => setIframeMediaEnabled(true)}>
-                      Enable Voice In Iframe
-                    </Button>
-                  </div>
-                </div>
-              )
+              <div id="vicidial-iframe-anchor" className="absolute inset-0" />
             ) : (
               <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
                 Missing <code className="mx-1">NEXT_PUBLIC_VICIDIAL_AGENT_URL</code> env var.
