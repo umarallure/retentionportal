@@ -229,9 +229,23 @@ export function useAssignedLeadDetails() {
   const router = useRouter();
   const idParam = router.query.id;
   const dealIdParam = router.query.dealId;
+  const dealidParam = router.query.dealid;
+  const deal_idParam = router.query.deal_id;
 
   const rawDealId =
-    typeof dealIdParam === "string" ? dealIdParam : Array.isArray(dealIdParam) ? dealIdParam[0] : undefined;
+    typeof dealIdParam === "string"
+      ? dealIdParam
+      : Array.isArray(dealIdParam)
+        ? dealIdParam[0]
+        : typeof dealidParam === "string"
+          ? dealidParam
+          : Array.isArray(dealidParam)
+            ? dealidParam[0]
+            : typeof deal_idParam === "string"
+              ? deal_idParam
+              : Array.isArray(deal_idParam)
+                ? deal_idParam[0]
+                : undefined;
   const parsedDealId = rawDealId ? Number(rawDealId) : null;
   const dealId = parsedDealId != null && Number.isFinite(parsedDealId) ? parsedDealId : null;
 
