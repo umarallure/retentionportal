@@ -262,7 +262,7 @@ export const VicidialWrapper = React.forwardRef<VicidialWrapperHandle, VicidialW
                     <span className="text-[11px] text-muted-foreground">Agent</span>
                     <Button
                       variant={sessionActive ? "secondary" : "outline"}
-                      size="xs"
+                      size="sm"
                       className="h-7 px-3 text-[11px]"
                       onClick={() => void (sessionActive ? onEndSession() : onStartSession())}
                       disabled={sessionUpdating || !agentUser}

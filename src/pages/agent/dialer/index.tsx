@@ -70,9 +70,8 @@ export default function AgentDialerDashboard() {
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionUpdating, setSessionUpdating] = useState(false);
   const [callingLeadId, setCallingLeadId] = useState<string | null>(null);
-  const defaultVicidialAgentUser = process.env.NEXT_PUBLIC_VICIDIAL_AGENT_USER || "hussain_khan";
+  const vicidialAgentUser = "hussain_khan";
   const defaultVicidialCampaignId = process.env.NEXT_PUBLIC_VICIDIAL_CAMPAIGN_ID || "ret1cda9";
-  const [vicidialAgentUser, setVicidialAgentUser] = useState(defaultVicidialAgentUser);
   const [vicidialCampaignId, setVicidialCampaignId] = useState<string | undefined>(
     defaultVicidialCampaignId || undefined,
   );
@@ -154,9 +153,6 @@ export default function AgentDialerDashboard() {
   useEffect(() => {
     if (!profileId) return;
     const mapping = getVicidialAgentMapping(profileId);
-    if (mapping?.vicidialUser) {
-      setVicidialAgentUser(mapping.vicidialUser);
-    }
     if (mapping?.campaignId) {
       setVicidialCampaignId(mapping.campaignId);
     }
@@ -183,14 +179,21 @@ export default function AgentDialerDashboard() {
           campaign_id: vicidialCampaignId,
         }),
       });
-      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      const result = (await response.json()) as { ok?: boolean; raw?: string; error?: string; message?: string };
       if (!response.ok || result.ok === false) {
-        throw new Error(result.raw || "Failed to set agent READY");
+        const msg = result.message ?? result.error ?? result.raw ?? "Failed to set agent READY";
+        throw new Error(msg);
       }
       setSessionActive(true);
       setVicidialMode("wrapper");
+      toast({ title: "Session started", description: "You are now active (READY)." });
     } catch (error) {
       console.error("[dialer] Failed to start session", error);
+      toast({
+        variant: "destructive",
+        title: "Could not go active",
+        description: error instanceof Error ? error.message : "Failed to set agent READY",
+      });
     } finally {
       setSessionUpdating(false);
     }
@@ -220,14 +223,21 @@ export default function AgentDialerDashboard() {
           campaign_id: vicidialCampaignId,
         }),
       });
-      const result = (await response.json()) as { ok?: boolean; raw?: string };
+      const result = (await response.json()) as { ok?: boolean; raw?: string; error?: string; message?: string };
       if (!response.ok || result.ok === false) {
-        throw new Error(result.raw || "Failed to pause agent");
+        const msg = result.message ?? result.error ?? result.raw ?? "Failed to pause agent";
+        throw new Error(msg);
       }
       setSessionActive(false);
       vicidialWrapperRef.current?.notifyExternalHangup();
+      toast({ title: "Session paused", description: "You are now paused." });
     } catch (error) {
       console.error("[dialer] Failed to end session", error);
+      toast({
+        variant: "destructive",
+        title: "Could not pause",
+        description: error instanceof Error ? error.message : "Failed to pause agent",
+      });
     } finally {
       setSessionUpdating(false);
     }
@@ -501,26 +511,6 @@ export default function AgentDialerDashboard() {
               VICIdial
             </CardTitle>
             <div className="flex items-center gap-2">
-              {rightView === "dialer" && (
-                <div className="flex rounded-full border bg-muted/40 p-0.5">
-                  <Button
-                    variant={vicidialMode === "native" ? "default" : "ghost"}
-                    size="xs"
-                    className="h-7 px-3 text-xs rounded-full"
-                    onClick={() => setVicidialMode("native")}
-                  >
-                    Vicidial Screen
-                  </Button>
-                  <Button
-                    variant={vicidialMode === "wrapper" ? "default" : "ghost"}
-                    size="xs"
-                    className="h-7 px-3 text-xs rounded-full"
-                    onClick={() => setVicidialMode("wrapper")}
-                  >
-                    Portal Dialer
-                  </Button>
-                </div>
-              )}
               {rightView === "dialer" ? (
                 <Button variant="outline" size="sm" onClick={openLeadsView}>
                   View Leads
@@ -561,21 +551,15 @@ export default function AgentDialerDashboard() {
 
           {rightView === "dialer" ? (
             vicidialUrl ? (
-              vicidialMode === "native" ? null : (
-                <div className="relative h-full flex flex-col">
-                  <div className="flex-1 min-h-0">
-                    <VicidialWrapper
-                      ref={vicidialWrapperRef}
-                      agentUser={vicidialAgentUser}
-                      campaignId={vicidialCampaignId}
-                      sessionActive={sessionActive}
-                      sessionUpdating={sessionUpdating}
-                      onStartSession={handleStartSession}
-                      onEndSession={handleEndSession}
-                    />
-                  </div>
-                </div>
-              )
+              // Portal Dialer wrapper commented out for now – only Vicidial Screen (iframe) is shown
+              // vicidialMode === "native" ? null : (
+              //   <div className="relative h-full flex flex-col">
+              //     <div className="flex-1 min-h-0">
+              //       <VicidialWrapper ... />
+              //     </div>
+              //   </div>
+              // )
+              null
             ) : (
               <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
                 Missing <code className="mx-1">NEXT_PUBLIC_VICIDIAL_AGENT_URL</code> env var.
