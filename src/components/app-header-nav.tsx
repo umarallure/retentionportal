@@ -114,6 +114,7 @@ export function AppHeaderNav() {
                 isActive={isActive("/agent") && !isActive("/agent/dialer")}
               items={[
                 { href: "/agent/assigned-leads", label: "Assigned Leads" },
+                { href: "/agent/daily-retention-fixes", label: "Daily Retention Fixes" },
               ]}
             />
             </>
