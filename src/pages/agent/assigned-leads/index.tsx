@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -694,9 +693,8 @@ export default function AssignedLeadsPage() {
                         <div className="flex flex-col items-end justify-center gap-2">
                           {activeTab === "assigned" ? (
                           <Button size="sm" variant="outline" className="gap-1" asChild>
-                            <Link
+                            <a
                               href={`/agent/assigned-lead-details?dealId=${encodeURIComponent(String(primaryLead.deal_id ?? ""))}`}
-                              reloadDocument
                               onClick={() => {
                                 try {
                                   sessionStorage.setItem(
@@ -714,7 +712,7 @@ export default function AssignedLeadsPage() {
                             >
                               <EyeIcon className="size-4" />
                               View
-                            </Link>
+                            </a>
                           </Button>
                           ) : (
                             <Button
@@ -785,9 +783,8 @@ export default function AssignedLeadsPage() {
                               <div className="flex flex-col items-end justify-center gap-2">
                                 {activeTab === "assigned" ? (
                                 <Button size="sm" variant="outline" className="gap-1" asChild>
-                                  <Link
+                                  <a
                                     href={viewHref}
-                                    reloadDocument
                                     onClick={() => {
                                       try {
                                         sessionStorage.setItem(
@@ -805,7 +802,7 @@ export default function AssignedLeadsPage() {
                                   >
                                     <EyeIcon className="size-4" />
                                     View
-                                  </Link>
+                                  </a>
                                 </Button>
                                 ) : (
                                   <Button
