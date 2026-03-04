@@ -572,12 +572,21 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
         let attempt = 0;
         let success = false;
         let lastError: unknown = null;
+        const insertedAssignmentIdByDealId = new Map<number, string>();
 
         while (attempt < MAX_RETRIES && !success) {
           attempt += 1;
-          const { error } = await supabase.from("retention_assigned_leads").insert(payload);
+          const { data: insertedRows, error } = await supabase
+            .from("retention_assigned_leads")
+            .insert(payload)
+            .select("id, deal_id");
           if (!error) {
             success = true;
+            for (const row of (insertedRows ?? []) as Array<{ id?: unknown; deal_id?: unknown }>) {
+              const id = typeof row?.id === "string" ? row.id : null;
+              const dealId = typeof row?.deal_id === "number" ? row.deal_id : null;
+              if (id && dealId != null) insertedAssignmentIdByDealId.set(dealId, id);
+            }
             assignedSoFar += payload.length;
             setAssignProgress({ total: plan.length, done: assignedSoFar });
           } else {
@@ -600,10 +609,8 @@ export function BulkAssignModal(props: BulkAssignModalProps) {
             const identity = identityById.get(dealId);
             const assignee = finalAssignments.get(dealId);
             if (!identity || !assignee) return null;
-            const assignment = activeAssignments.find(
-              (a) => a.deal_id === dealId && a.assignee_profile_id === assignee,
-            );
-            return { identity, assignee, assignmentId: assignment?.id ?? null };
+            const assignmentId = insertedAssignmentIdByDealId.get(dealId) ?? null;
+            return { identity, assignee, assignmentId };
           })
           .filter((v): v is { identity: DealIdentityRow; assignee: string; assignmentId: string | null } => !!v);
 
