@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import mysql from "mysql2/promise";
-import { callVicidialAssignmentApi, type VicidialParams } from "@/lib/vicidial";
+import { callVicidialAdminApi, type VicidialParams } from "@/lib/vicidial";
 import { buildLeadDetailsUrl, getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
 import { upsertVicidialLeadIndex } from "@/lib/vicidial-lead-index";
 
@@ -159,7 +159,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         const existing = (rows as Array<{ lead_id?: number; status?: string }>)[0];
         const existingLeadId = typeof existing?.lead_id === "number" ? existing.lead_id : null;
         if (existingLeadId) {
-          const update = await callVicidialAssignmentApi("update_lead", {
+          const update = await callVicidialAdminApi("update_lead", {
             lead_id: existingLeadId,
             phone_number: params.phone_number,
             first_name: params.first_name,
@@ -193,7 +193,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
-    const result = await callVicidialAssignmentApi(fn, params);
+    const result = await callVicidialAdminApi(fn, params);
     const vicidialError = result.parsed.ERROR ?? (/\bERROR\b/i.test(result.raw) ? result.raw.trim() : null);
 
     if (vicidialError) {

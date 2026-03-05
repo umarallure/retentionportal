@@ -1,17 +1,22 @@
 {
-  "787e4473-66a4-4c95-9128-d595859a19a9": {
-    "campaignId": "ret787e4",
-    "listId": "1000",
-    "vicidialUser": "aqib_afridi"
+  "1cda9534-ffb8-466b-bfaa-85b372cf7c01": {
+    "campaignId": "Hussain",
+    "listId": "2001",
+    "vicidialUser": "2001"
+  },
+  "b772a62d-918b-4153-98bc-c138889c2532": {
+    "campaignId": "Justine",
+    "listId": "2002",
+    "vicidialUser": "2002"
   },
   "b9fcae3a-3653-4ab9-ab86-49dd8c9399ad": {
-    "campaignId": "retb9fca",
-    "listId": "1001",
-    "vicidialUser": "qasim_raja"
+    "campaignId": "MQASIM",
+    "listId": "2003",
+    "vicidialUser": "2003"
   },
-  "1cda9534-ffb8-466b-bfaa-85b372cf7c01": {
-    "campaignId": "ret1cda9",
-    "listId": "1002",
-    "vicidialUser": "hussain_khan"
+  "5f5a7aa1-32b0-42e3-aee8-15e95ff79b72": {
+    "campaignId": "MAhmad",
+    "listId": "2004",
+    "vicidialUser": "2004"
   }
 }

@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { callVicidialAssignmentApi } from "@/lib/vicidial";
+import { callVicidialAdminApi } from "@/lib/vicidial";
 import { getVicidialAgentMapping } from "@/lib/vicidial-agent-mapping";
 import { findVicidialLeadIndex, removeVicidialLeadIndex } from "@/lib/vicidial-lead-index";
 
@@ -58,7 +58,7 @@ async function findLeadIds(dealId: string, phone: string, listId?: string) {
   const candidates = new Set<number>();
 
   if (dealId) {
-    const byVendor = await callVicidialAssignmentApi("lead_search", {
+    const byVendor = await callVicidialAdminApi("lead_search", {
       search_method: "VENDOR_LEAD_CODE",
       search_value: dealId,
       list_id: listId,
@@ -68,11 +68,11 @@ async function findLeadIds(dealId: string, phone: string, listId?: string) {
   }
 
   if (phone) {
-    const byPhone = await callVicidialAssignmentApi("check_phone_number", { phone_number: phone });
+    const byPhone = await callVicidialAdminApi("check_phone_number", { phone_number: phone });
     raws.push(byPhone.raw);
     for (const id of parseLeadIds(byPhone.raw)) candidates.add(id);
 
-    const bySearchPhone = await callVicidialAssignmentApi("lead_search", {
+    const bySearchPhone = await callVicidialAdminApi("lead_search", {
       search_method: "PHONE_NUMBER",
       search_value: phone,
       list_id: listId,
@@ -116,7 +116,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
 
     if (indexed?.vicidialLeadId) {
-      const direct = await callVicidialAssignmentApi("update_lead", {
+      const direct = await callVicidialAdminApi("update_lead", {
         lead_id: indexed.vicidialLeadId,
         status: statusSet,
         comments: "Unassigned from Retention Portal",
@@ -152,7 +152,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     let updated = 0;
     for (const leadId of leadIds) {
-      const result = await callVicidialAssignmentApi("update_lead", {
+      const result = await callVicidialAdminApi("update_lead", {
         lead_id: leadId,
         status: statusSet,
         comments: "Unassigned from Retention Portal",

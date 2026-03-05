@@ -92,6 +92,30 @@ export async function callVicidialAssignmentApi(
   return callVicidialNonAgentApiInternal(baseUrl, user, pass, source, fn, inputParams);
 }
 
+export async function callVicidialAdminApi(
+  fn: string,
+  inputParams: VicidialParams = {},
+): Promise<VicidialApiResult> {
+  const baseUrl =
+    process.env.VICIDIAL_ADMIN_BASE_URL ??
+    process.env.VICIDIAL_ASSIGN_BASE_URL ??
+    getRequiredEnv("VICIDIAL_BASE_URL");
+  const user =
+    process.env.VICIDIAL_ADMIN_API_USER ??
+    process.env.VICIDIAL_ASSIGN_API_USER ??
+    getRequiredEnv("VICIDIAL_API_USER");
+  const pass =
+    process.env.VICIDIAL_ADMIN_API_PASS ??
+    process.env.VICIDIAL_ASSIGN_API_PASS ??
+    getRequiredEnv("VICIDIAL_API_PASS");
+  const source =
+    process.env.VICIDIAL_ADMIN_API_SOURCE ??
+    process.env.VICIDIAL_ASSIGN_API_SOURCE ??
+    process.env.VICIDIAL_API_SOURCE ??
+    "retention_portal";
+  return callVicidialNonAgentApiInternal(baseUrl, user, pass, source, fn, inputParams);
+}
+
 export async function callVicidialAgentApi(
   fn: string,
   inputParams: VicidialParams = {},

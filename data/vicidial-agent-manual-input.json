@@ -1,0 +1,28 @@
+{
+  "agents": [
+    {
+      "profileId": "1cda9534-ffb8-466b-bfaa-85b372cf7c01",
+      "vicidialUser": "2001",
+      "campaignId": "Hussain",
+      "listId": "2001"
+    },
+    {
+      "profileId": "b772a62d-918b-4153-98bc-c138889c2532",
+      "vicidialUser": "2002",
+      "campaignId": "Justine",
+      "listId": "2002"
+    },
+    {
+      "profileId": "b9fcae3a-3653-4ab9-ab86-49dd8c9399ad",
+      "vicidialUser": "2003",
+      "campaignId": "MQASIM",
+      "listId": "2003"
+    },
+    {
+      "profileId": "5f5a7aa1-32b0-42e3-aee8-15e95ff79b72",
+      "vicidialUser": "2004",
+      "campaignId": "MAhmad",
+      "listId": "2004"
+    }
+  ]
+}
