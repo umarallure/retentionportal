@@ -182,6 +182,7 @@ export async function addContactToCloudTalk(
     // Add ExternalUrl when either dealId or leadId is available.
     const leadDetailUrl = buildLeadDetailUrl({ dealId, leadId });
     if (leadDetailUrl) {
+      requestBody.website = leadDetailUrl;
       requestBody.ExternalUrl = [
         {
           name: "Lead Details",
