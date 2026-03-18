@@ -7,13 +7,24 @@ import { createClient } from "@supabase/supabase-js";
 type RetentionAgentRow = {
   profile_id: string;
   active?: boolean | null;
-  profiles?: {
+  profiles?: Array<{
     id: string;
     display_name: string | null;
     agent_code?: string | null;
     user_id?: string | null;
-  } | null;
+  }> | null;
 };
+
+function getRelatedProfile(
+  profiles: RetentionAgentRow["profiles"],
+): {
+  id: string;
+  display_name: string | null;
+  agent_code?: string | null;
+  user_id?: string | null;
+} | null {
+  return Array.isArray(profiles) ? profiles[0] ?? null : null;
+}
 
 function assertEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -54,13 +65,16 @@ async function main() {
     throw new Error(`Failed loading retention agents: ${error.message}`);
   }
 
-  const rows = ((data ?? []) as RetentionAgentRow[]).map((row) => ({
+  const rows = ((data ?? []) as unknown as RetentionAgentRow[]).map((row) => {
+    const profile = getRelatedProfile(row.profiles);
+    return {
     retention_profile_id: row.profile_id,
     active: row.active ?? null,
-    display_name: row.profiles?.display_name ?? null,
-    agent_code: row.profiles?.agent_code ?? null,
-    user_id: row.profiles?.user_id ?? null,
-  }));
+    display_name: profile?.display_name ?? null,
+    agent_code: profile?.agent_code ?? null,
+    user_id: profile?.user_id ?? null,
+  };
+  });
 
   const output = {
     generated_at: new Date().toISOString(),

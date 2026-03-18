@@ -64,13 +64,24 @@ type CloudTalkAgentRow = {
 type RetentionAgentRow = {
   profile_id: string;
   active?: boolean | null;
-  profiles?: {
+  profiles?: Array<{
     id: string;
     display_name: string | null;
     agent_code?: string | null;
     user_id?: string | null;
-  } | null;
+  }> | null;
 };
+
+function getRelatedProfile(
+  profiles: RetentionAgentRow["profiles"],
+): {
+  id: string;
+  display_name: string | null;
+  agent_code?: string | null;
+  user_id?: string | null;
+} | null {
+  return Array.isArray(profiles) ? profiles[0] ?? null : null;
+}
 
 function assertEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -153,7 +164,7 @@ async function fetchRetentionAgents() {
     throw new Error(`Failed loading retention agents: ${error.message}`);
   }
 
-  return (data ?? []) as RetentionAgentRow[];
+  return (data ?? []) as unknown as RetentionAgentRow[];
 }
 
 async function main() {
@@ -169,13 +180,16 @@ async function main() {
     fetchRetentionAgents(),
   ]);
 
-  const normalizedRetentionAgents = retentionAgents.map((row) => ({
+  const normalizedRetentionAgents = retentionAgents.map((row) => {
+    const profile = getRelatedProfile(row.profiles);
+    return {
     retention_profile_id: row.profile_id,
-    display_name: row.profiles?.display_name ?? null,
-    agent_code: row.profiles?.agent_code ?? null,
-    user_id: row.profiles?.user_id ?? null,
-    normalized_name: normalizeName(row.profiles?.display_name),
-  }));
+    display_name: profile?.display_name ?? null,
+    agent_code: profile?.agent_code ?? null,
+    user_id: profile?.user_id ?? null,
+    normalized_name: normalizeName(profile?.display_name),
+  };
+  });
 
   const retentionByName = new Map<string, typeof normalizedRetentionAgents>();
   for (const row of normalizedRetentionAgents) {
