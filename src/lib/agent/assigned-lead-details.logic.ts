@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 
 import { supabase } from "@/lib/supabase";
+import { sortVerificationItems } from "@/lib/verification-field-order";
 import {
   findDuplicateLeadsFromMondayGhlNames,
   type DuplicateLeadFinderResult,
@@ -2297,7 +2298,7 @@ export function useAssignedLeadDetails() {
         if (cancelled) return;
         
         setVerificationSessionId(sessionId);
-        const rows = (items ?? []) as Array<Record<string, unknown>>;
+        const rows = sortVerificationItems((items ?? []) as Array<Record<string, unknown>>);
         setVerificationItems(rows);
 
         const map: Record<string, string> = {};

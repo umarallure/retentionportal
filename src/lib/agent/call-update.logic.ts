@@ -10,6 +10,7 @@ import {
   type LeadRecord,
   getString,
 } from "@/lib/agent/assigned-lead-details.logic";
+import { sortVerificationItems } from "@/lib/verification-field-order";
 
 import type { MondayComDeal } from "@/types";
 
@@ -434,7 +435,7 @@ export function useCallUpdate() {
 
         if (cancelled) return;
 
-        const rows = (itemsRows ?? []) as Array<Record<string, unknown>>;
+        const rows = sortVerificationItems((itemsRows ?? []) as Array<Record<string, unknown>>);
         
         setVerificationSessionId(sessionId);
         setVerificationSession(((sessionDbRow ?? null) as RetentionVerificationSessionRow | null) ?? session);

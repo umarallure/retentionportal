@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { sortVerificationItems } from "@/lib/verification-field-order";
 
 type Body = {
   leadId?: string;
@@ -340,7 +341,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(500).json({ ok: false, error: itemsErr2.message });
     }
 
-    const finalItems = (itemsRows2 ?? []) as Array<Record<string, unknown>>;
+    const finalItems = sortVerificationItems((itemsRows2 ?? []) as Array<Record<string, unknown>>);
     return res.status(200).json({ ok: true, sessionId, items: finalItems });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load verification items";
