@@ -12,13 +12,11 @@ import type { AgentType } from "@/lib/dispositions/types";
 import type { RetentionType } from "@/components/agent/retention-workflows";
 import { PolicyStatusAlertDialog } from "@/components/agent/assigned-lead-details/policy-status-alert-dialog";
 import { NewSaleConfirmDialog } from "@/components/agent/assigned-lead-details/new-sale-confirm-dialog";
-import { LeaveConfirmDialog } from "@/components/agent/assigned-lead-details/leave-confirm-dialog";
 import { LeadHeader } from "@/components/agent/assigned-lead-details/lead-header";
 import { PolicyCard } from "@/components/agent/assigned-lead-details/policy-card";
 import { DailyDealFlowTab } from "@/components/agent/assigned-lead-details/daily-deal-flow-tab";
 import { ContactNotesPanel } from "@/components/agent/assigned-lead-details/contact-notes-panel";
 import { VerificationPanel } from "@/components/agent/assigned-lead-details/verification-panel";
-import { useNavigationPrevention } from "@/components/agent/assigned-lead-details/use-navigation-prevention";
 import { useRetentionAgent } from "@/components/agent/assigned-lead-details/use-retention-agent";
 import { useAccess } from "@/components/access-context";
 
@@ -35,10 +33,6 @@ export default function AssignedLeadDetailsPage() {
   const [pendingNewSalePolicyKey, setPendingNewSalePolicyKey] = React.useState<string | null>(null);
   const [expandedDealFlowRows, setExpandedDealFlowRows] = React.useState<Set<string>>(new Set());
   const [dispositionModalOpen, setDispositionModalOpen] = React.useState(false);
-  const [leaveConfirmOpen, setLeaveConfirmOpen] = React.useState(false);
-  const [pendingNavigationUrl, setPendingNavigationUrl] = React.useState<string | null>(null);
-
-  const { allowNavigation } = useNavigationPrevention(setPendingNavigationUrl, setLeaveConfirmOpen);
 
   const {
     lead,
@@ -74,6 +68,7 @@ export default function AssignedLeadDetailsPage() {
     loading,
     error,
     name,
+    phone,
     carrier,
     productType,
     center,
@@ -163,22 +158,6 @@ export default function AssignedLeadDetailsPage() {
               }}
       />
 
-      <LeaveConfirmDialog
-        open={leaveConfirmOpen}
-        onOpenChange={(open) => {
-          setLeaveConfirmOpen(open);
-          if (!open) setPendingNavigationUrl(null);
-        }}
-        pendingNavigationUrl={pendingNavigationUrl}
-        onConfirm={() => {
-                const url = pendingNavigationUrl;
-          allowNavigation();
-                setLeaveConfirmOpen(false);
-                setPendingNavigationUrl(null);
-                if (url) void router.push(url);
-              }}
-      />
-
       <QuickDispositionModal
         open={dispositionModalOpen}
         onOpenChange={setDispositionModalOpen}
@@ -199,6 +178,7 @@ export default function AssignedLeadDetailsPage() {
         <Card>
           <LeadHeader
             name={name}
+            phone={phone}
             carrier={carrier}
             productType={productType}
             center={center}

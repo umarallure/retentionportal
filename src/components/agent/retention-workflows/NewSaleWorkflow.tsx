@@ -29,6 +29,7 @@ type NewSaleWorkflowProps = {
   retentionAgent: string;
   verificationSessionId: string | null;
   customerName: string | null;
+  submissionId: string | null;
   onCancel: () => void;
 };
 
@@ -40,6 +41,7 @@ export function NewSaleWorkflow({
   retentionAgent,
   verificationSessionId,
   customerName,
+  submissionId,
   onCancel,
 }: NewSaleWorkflowProps) {
   const { toast } = useToast();
@@ -82,6 +84,7 @@ export function NewSaleWorkflow({
           type: "buffer_connected",
           leadId,
           dealId,
+          submissionId,
           policyNumber,
           callCenter,
           retentionAgent,
@@ -89,6 +92,7 @@ export function NewSaleWorkflow({
           customerName,
           retentionType: "new_sale",
           retentionNotes: quoteNotes,
+          updateCallResultUrl: `https://agents-portal-zeta.vercel.app/call-result-update?submissionId=${submissionId}`,
           quoteDetails: {
             carrier: quoteCarrier,
             product: quoteProduct,

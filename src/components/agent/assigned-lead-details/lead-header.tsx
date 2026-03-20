@@ -8,6 +8,7 @@ import { PhoneIcon, XIcon } from "lucide-react";
 
 type LeadHeaderProps = {
   name: string;
+  phone: string;
   carrier: string;
   productType: string;
   center: string;
@@ -23,6 +24,7 @@ type LeadHeaderProps = {
 
 export function LeadHeader({
   name,
+  phone,
   carrier,
   productType,
   center,
@@ -52,7 +54,14 @@ export function LeadHeader({
     <CardHeader>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <CardTitle>{name}</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="text-2xl">{name}</CardTitle>
+            {phone && phone !== "-" && (
+              <span className="rounded-md bg-blue-100 px-3 py-1 text-lg font-semibold text-blue-800">
+                {phone}
+              </span>
+            )}
+          </div>
           <CardDescription>
             {carrier !== "-" ? carrier : ""}
             {productType !== "-" ? ` • ${productType}` : ""}

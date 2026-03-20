@@ -14,6 +14,7 @@ type RequestBody = {
   retentionType?: string | null;
   retentionNotes?: string | null;
   quoteDetails?: Record<string, unknown> | null;
+  updateCallResultUrl?: string | null;
 };
 
 type ResponseData =
@@ -231,13 +232,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     )}&dealId=${encodeURIComponent(String(dealId ?? ""))}&leadId=${encodeURIComponent(
       leadId,
     )}`;
-    const updateCallResultUrl = `${portalBaseUrl}/agent/call-update?leadId=${encodeURIComponent(
-      leadId,
-    )}&policyNumber=${encodeURIComponent(policyNumber)}&dealId=${encodeURIComponent(
-      String(dealId ?? ""),
-    )}&callCenter=${encodeURIComponent(callCenter || "")}&retentionAgent=${encodeURIComponent(
-      bufferAgentName,
-    )}&retentionType=${encodeURIComponent(String(body.retentionType ?? "new_sale"))}`;
+    const updateCallResultUrl =
+      typeof body.updateCallResultUrl === "string" && body.updateCallResultUrl.trim().length
+        ? body.updateCallResultUrl
+        : `${portalBaseUrl}/call-result-update?submissionId=${encodeURIComponent(submissionId)}`;
 
     const functionResponse = await fetch(getFunctionsUrl(), {
       method: "POST",
