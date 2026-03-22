@@ -118,7 +118,7 @@ export function VerificationPanel({
 
     setDncCheckingItemId(itemId);
     try {
-      const { data, error } = await supabase.functions.invoke("dnc-lookup", {
+      const { data, error } = await supabase.functions.invoke("blacklist-check", {
         body: { mobileNumber: cleanPhone },
       });
 
@@ -134,11 +134,19 @@ export function VerificationPanel({
       const listIncludes = (value: unknown) =>
         Array.isArray(value) && value.some((v) => typeof v === "string" && (v === cleanPhone || v.endsWith(cleanPhone.slice(-10))));
 
-      const isDnc = listIncludes(payload?.federal_dnc) || listIncludes(payload?.dnc);
-      const isTcpa = listIncludes(payload?.tcpa_litigator);
+      const isTcpaFromNormalized = payload?.is_tcpa === true || payload?.is_blacklisted === true;
+      const isDncFromNormalized = payload?.is_dnc === true;
+      const isDncFromLists = listIncludes(payload?.federal_dnc) || listIncludes(payload?.dnc);
+      const isTcpaFromLists = listIncludes(payload?.tcpa_litigator);
+
+      const isTcpa = isTcpaFromNormalized || isTcpaFromLists;
+      const isDnc = isDncFromNormalized || isDncFromLists;
 
       const status: "clear" | "dnc" | "tcpa" = isTcpa ? "tcpa" : isDnc ? "dnc" : "clear";
-      const message = isTcpa
+      const normalizedMessage = typeof payload?.message === "string" ? payload.message : null;
+      const message = normalizedMessage
+        ? normalizedMessage
+        : isTcpa
         ? "WARNING: This number is flagged as TCPA/Litigator."
         : isDnc
           ? "This number is on the DNC list. Proceed with verbal consent."
