@@ -2,9 +2,20 @@
 
 import * as React from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import { titleizeKey } from "@/lib/agent/assigned-lead-details.logic";
 
 type VerificationPanelProps = {
@@ -32,13 +43,158 @@ export function VerificationPanel({
   onToggleVerification,
   onUpdateValue,
 }: VerificationPanelProps) {
+  const [showUnderwritingModal, setShowUnderwritingModal] = React.useState(false);
+  const [conditionInput, setConditionInput] = React.useState("");
+  const [medicationInput, setMedicationInput] = React.useState("");
+  const [toolkitUrl, setToolkitUrl] = React.useState("https://insurancetoolkits.com/login");
+
+  const [underwritingData, setUnderwritingData] = React.useState({
+    tobaccoLast12Months: "" as "yes" | "no" | "",
+    healthConditions: [] as string[],
+    medications: [] as string[],
+    height: "",
+    weight: "",
+    carrier: "",
+    productLevel: "",
+    coverageAmount: "",
+    monthlyPremium: "",
+  });
+
+  const addTag = (raw: string, key: "healthConditions" | "medications") => {
+    const value = raw.trim();
+    if (!value) return;
+    setUnderwritingData((prev) => {
+      if (prev[key].some((v) => v.toLowerCase() === value.toLowerCase())) return prev;
+      return { ...prev, [key]: [...prev[key], value] };
+    });
+  };
+
+  const removeTag = (key: "healthConditions" | "medications", index: number) => {
+    setUnderwritingData((prev) => ({
+      ...prev,
+      [key]: prev[key].filter((_, i) => i !== index),
+    }));
+  };
+
+  const setFieldValueAndVerify = (fieldName: string, value: string) => {
+    const item = verificationItems.find(
+      (i) => typeof i.id === "string" && typeof i.field_name === "string" && i.field_name === fieldName,
+    );
+    if (!item || typeof item.id !== "string") return;
+
+    void onUpdateValue(item.id, value);
+    void onToggleVerification(item.id, true);
+  };
+
+  const cleanMoney = (v: string) => v.replace(/\$/g, "").replace(/,/g, "").trim();
+
+  const getVerificationFieldValue = React.useCallback(
+    (fieldName: string) => {
+      const item = verificationItems.find(
+        (i) => typeof i.id === "string" && typeof i.field_name === "string" && i.field_name === fieldName,
+      );
+      if (!item) return "";
+
+      const itemId = typeof item.id === "string" ? item.id : "";
+      if (!itemId) return "";
+
+      const fromInput = verificationInputValues[itemId];
+      if (typeof fromInput === "string" && fromInput.trim().length > 0) return fromInput.trim();
+
+      const verifiedValue = typeof item.verified_value === "string" ? item.verified_value.trim() : "";
+      if (verifiedValue) return verifiedValue;
+
+      const originalValue = typeof item.original_value === "string" ? item.original_value.trim() : "";
+      return originalValue;
+    },
+    [verificationItems, verificationInputValues],
+  );
+
+  React.useEffect(() => {
+    if (!showUnderwritingModal) return;
+
+    const parseTagList = (value: string) =>
+      value
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+
+    const tobaccoRaw = getVerificationFieldValue("tobacco_use").toLowerCase();
+    const tobaccoLast12Months: "yes" | "no" | "" =
+      tobaccoRaw === "yes" || tobaccoRaw === "true" || tobaccoRaw === "1"
+        ? "yes"
+        : tobaccoRaw === "no" || tobaccoRaw === "false" || tobaccoRaw === "0"
+          ? "no"
+          : "";
+
+    setUnderwritingData({
+      tobaccoLast12Months,
+      healthConditions: parseTagList(getVerificationFieldValue("health_conditions")),
+      medications: parseTagList(getVerificationFieldValue("medications")),
+      height: getVerificationFieldValue("height"),
+      weight: getVerificationFieldValue("weight"),
+      carrier: getVerificationFieldValue("carrier"),
+      productLevel: getVerificationFieldValue("insurance_application_details"),
+      coverageAmount: getVerificationFieldValue("coverage_amount"),
+      monthlyPremium: getVerificationFieldValue("monthly_premium"),
+    });
+
+    setConditionInput("");
+    setMedicationInput("");
+  }, [showUnderwritingModal, getVerificationFieldValue]);
+
+  const saveUnderwritingToVerification = () => {
+    if (underwritingData.tobaccoLast12Months) {
+      setFieldValueAndVerify("tobacco_use", underwritingData.tobaccoLast12Months === "yes" ? "Yes" : "No");
+    }
+
+    if (underwritingData.healthConditions.length > 0) {
+      setFieldValueAndVerify("health_conditions", underwritingData.healthConditions.join(", "));
+    }
+
+    if (underwritingData.medications.length > 0) {
+      setFieldValueAndVerify("medications", underwritingData.medications.join(", "));
+    }
+
+    if (underwritingData.height.trim()) {
+      setFieldValueAndVerify("height", underwritingData.height.trim());
+    }
+
+    if (underwritingData.weight.trim()) {
+      setFieldValueAndVerify("weight", underwritingData.weight.trim());
+    }
+
+    if (underwritingData.carrier.trim()) {
+      setFieldValueAndVerify("carrier", underwritingData.carrier.trim());
+    }
+
+    if (underwritingData.productLevel.trim()) {
+      setFieldValueAndVerify("insurance_application_details", underwritingData.productLevel.trim());
+    }
+
+    if (underwritingData.coverageAmount.trim()) {
+      setFieldValueAndVerify("coverage_amount", cleanMoney(underwritingData.coverageAmount));
+    }
+
+    if (underwritingData.monthlyPremium.trim()) {
+      setFieldValueAndVerify("monthly_premium", cleanMoney(underwritingData.monthlyPremium));
+    }
+
+    setShowUnderwritingModal(false);
+  };
+
   return (
     <Card className="h-fit lg:sticky lg:top-24 lg:max-h-[calc(100vh-6rem)] lg:flex lg:flex-col">
       <CardHeader className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-base font-semibold">Verification Panel</CardTitle>
-          <div className="text-xs rounded-md bg-muted px-2 py-1 font-medium text-foreground">
-            {selectedPolicyView?.callCenter ?? "—"}
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowUnderwritingModal(true)}>
+              Underwriting
+            </Button>
+            <div className="text-xs rounded-md bg-muted px-2 py-1 font-medium text-foreground">
+              {selectedPolicyView?.callCenter ?? "-"}
+            </div>
           </div>
         </div>
         <CardDescription>
@@ -101,6 +257,251 @@ export function VerificationPanel({
           </div>
         )}
       </CardContent>
+
+      <Dialog open={showUnderwritingModal} onOpenChange={setShowUnderwritingModal}>
+        <DialogContent
+          className="w-[98vw] max-w-[98vw] sm:max-w-[98vw] h-[96vh] max-h-[96vh] overflow-y-auto"
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          showCloseButton={false}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-bold text-purple-700">Underwriting</DialogTitle>
+            <DialogDescription className="text-base">
+              Please read the following script to the customer and verify all information.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4 text-xl">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.35fr] gap-6 items-stretch">
+              <div className="bg-gray-50 p-4 rounded-lg border h-full overflow-y-auto">
+                <h4 className="font-bold text-2xl mb-3">Underwriting Questions</h4>
+
+                <div className="space-y-4 text-xl">
+                  <p className="font-medium">
+                    "I am going to ask you some medical questions and we expect your honesty that is going to save us a lot of time. And, this will help us evaluate which insurance carrier comes back with the maximum benefit at the lowest rates for you."
+                  </p>
+
+                  <div className="space-y-3 p-4 bg-white rounded-lg border">
+                    <p className="font-bold text-xl">Question 1:</p>
+                    <p className="text-lg">Have you ever been diagnosed or treated for Alzheimer's Dementia, Congestive heart failure, organ transplant, HIV, AIDS, ARC, Leukemia, Tuberculosis, chronic Respiratory disease, currently paralyzed, amputation due to a disease? Are you currently hospitalized in a nursing facility? Due to a disease are you currently confined to a wheelchair? Are you currently on oxygen?</p>
+                  </div>
+
+                  <div className="space-y-3 p-4 bg-white rounded-lg border">
+                    <p className="font-bold text-xl">Question 2:</p>
+                    <p className="text-lg">In the last 5 years, have you had any heart attacks, cancers, Alzheimer's, dementia, congestive heart failure, kidney failure or an organ removal? Have you ever had any disorders of the kidney, lung, brain, heart, circulatory system or liver? Or In the last 3 years have you been diagnosed and treated for leukemia, sickle cell anemia, brain disorder, Alzheimer's or dementia, aneurysm, diabetic coma, amputation due to any disease, cirrhosis of the liver, Multiple Sclerosis, chronic respiratory disease, tuberculosis, chronic pneumonia, hepatitis? Or In the last 2 years if you had any stents, pacemaker, defibrillator, valve replacement, stroke, TIA or paralysis?</p>
+                  </div>
+
+                  <div className="space-y-3 p-4 bg-white rounded-lg border">
+                    <p className="font-bold text-xl">Question 3:</p>
+                    <p className="text-lg">Or if you have any complications from diabetes? Like (Neuropathy, amputation due to diabetes, retinopathy, diabetic coma, etc) Have you been treated or diagnosed with COPD, Bipolar, or schizophrenia?</p>
+                  </div>
+
+                  <div className="mt-4 p-3 bg-yellow-50 rounded border border-yellow-200">
+                    <p className="font-bold mb-2 text-xl">Tobacco Usage:</p>
+                    <p className="text-lg">Have you consumed any tobacco or nicotine products in the last 12 months?</p>
+                    <div className="flex gap-4 mt-2">
+                      <label className="flex items-center gap-2 text-xl">
+                        <input
+                          type="radio"
+                          name="tobacco"
+                          checked={underwritingData.tobaccoLast12Months === "yes"}
+                          onChange={() => setUnderwritingData({ ...underwritingData, tobaccoLast12Months: "yes" })}
+                        />
+                        Yes
+                      </label>
+                      <label className="flex items-center gap-2 text-xl">
+                        <input
+                          type="radio"
+                          name="tobacco"
+                          checked={underwritingData.tobaccoLast12Months === "no"}
+                          onChange={() => setUnderwritingData({ ...underwritingData, tobaccoLast12Months: "no" })}
+                        />
+                        No
+                      </label>
+                    </div>
+                  </div>
+
+                  <p className="font-medium text-xl mt-4">Lastly, do you have any health conditions or take any prescribed medication on a regular basis?</p>
+
+                  <div className="p-4 bg-white rounded-lg border">
+                    <p className="font-bold text-xl">Follow Up:</p>
+                    <ul className="list-disc ml-6 text-lg mt-2">
+                      <li>How many medications are you taking on a daily basis?</li>
+                      <li>Do you know what those medications are for?</li>
+                      <li>Do you have your medications, or a list of your medications nearby?</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white border-2 border-purple-200 rounded-lg overflow-hidden flex flex-col">
+                <div className="bg-purple-600 text-white px-4 py-2 font-bold text-lg flex justify-between items-center flex-shrink-0">
+                  <span>Insurance Toolkit</span>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setToolkitUrl("https://insurancetoolkits.com/fex/quoter")}
+                    >
+                      Quote Tool
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs text-white border-white hover:bg-purple-700"
+                      onClick={() => setToolkitUrl("https://insurancetoolkits.com/login")}
+                    >
+                      Login
+                    </Button>
+                  </div>
+                </div>
+                <div className="border-2 border-purple-300 rounded-lg overflow-hidden bg-white flex-1" style={{ minHeight: "600px" }}>
+                  <iframe
+                    style={{ border: "none", height: "100%", width: "100%" }}
+                    src={toolkitUrl}
+                    title="Insurance Toolkit"
+                    id="healthKitIframe"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xl font-bold">Health Conditions:</Label>
+              <div className="rounded-md border p-3 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {underwritingData.healthConditions.map((tag, idx) => (
+                    <Badge key={`${tag}-${idx}`} variant="secondary" className="text-base px-3 py-1 gap-2">
+                      {tag}
+                      <button type="button" onClick={() => removeTag("healthConditions", idx)} aria-label={`Remove ${tag}`}>
+                        x
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+                <Input
+                  value={conditionInput}
+                  onChange={(e) => setConditionInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addTag(conditionInput, "healthConditions");
+                      setConditionInput("");
+                    }
+                  }}
+                  placeholder="Type and press Enter to add conditions..."
+                  className="text-xl h-12"
+                />
+              </div>
+              <p className="text-sm text-gray-500">Click on conditions above to add them, or type custom conditions.</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xl font-bold">Medications:</Label>
+              <div className="rounded-md border p-3 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {underwritingData.medications.map((tag, idx) => (
+                    <Badge key={`${tag}-${idx}`} variant="secondary" className="text-base px-3 py-1 gap-2">
+                      {tag}
+                      <button type="button" onClick={() => removeTag("medications", idx)} aria-label={`Remove ${tag}`}>
+                        x
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+                <Input
+                  value={medicationInput}
+                  onChange={(e) => setMedicationInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addTag(medicationInput, "medications");
+                      setMedicationInput("");
+                    }
+                  }}
+                  placeholder="Type and press Enter to add medications..."
+                  className="text-xl h-12"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-xl font-bold">Height:</Label>
+                <Input
+                  value={underwritingData.height}
+                  onChange={(e) => setUnderwritingData({ ...underwritingData, height: e.target.value })}
+                  placeholder="e.g., 5 ft 10 in"
+                  className="text-xl h-12"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xl font-bold">Weight:</Label>
+                <Input
+                  value={underwritingData.weight}
+                  onChange={(e) => setUnderwritingData({ ...underwritingData, weight: e.target.value })}
+                  placeholder="e.g., 180 lbs"
+                  className="text-xl h-12"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xl font-bold">Carrier:</Label>
+                <Input
+                  value={underwritingData.carrier}
+                  onChange={(e) => setUnderwritingData({ ...underwritingData, carrier: e.target.value })}
+                  placeholder="e.g., AMAM"
+                  className="text-xl h-12"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xl font-bold">Product Level:</Label>
+                <Input
+                  value={underwritingData.productLevel}
+                  onChange={(e) => setUnderwritingData({ ...underwritingData, productLevel: e.target.value })}
+                  placeholder="e.g., Preferred"
+                  className="text-xl h-12"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xl font-bold">Coverage Amount:</Label>
+                <Input
+                  value={underwritingData.coverageAmount}
+                  onChange={(e) => setUnderwritingData({ ...underwritingData, coverageAmount: e.target.value })}
+                  placeholder="e.g., $10,000"
+                  className="text-xl h-12"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xl font-bold">Monthly Premium:</Label>
+                <Input
+                  value={underwritingData.monthlyPremium}
+                  onChange={(e) => setUnderwritingData({ ...underwritingData, monthlyPremium: e.target.value })}
+                  placeholder="e.g., $50.00"
+                  className="text-xl h-12"
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4 flex-col gap-2">
+            <div className="text-sm text-gray-600 text-center">
+              Clicking "Save & Verify All" will save all fields below to the verification panel and mark them as verified.
+            </div>
+            <div className="flex gap-2 w-full">
+              <Button type="button" variant="outline" className="text-lg px-6 flex-1" onClick={() => setShowUnderwritingModal(false)}>
+                Cancel
+              </Button>
+              <Button type="button" className="text-lg px-6 bg-green-600 hover:bg-green-700 flex-1" onClick={saveUnderwritingToVerification}>
+                Save & Verify All
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
