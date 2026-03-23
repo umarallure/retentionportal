@@ -325,7 +325,7 @@ export function PolicyCard({
                   retentionAgent={retentionAgent}
                   verificationSessionId={verificationSessionId}
                   customerName={policy.clientName}
-                  submissionId={lead?.submission_id ?? null}
+                  submissionId={typeof lead?.submission_id === "string" ? lead.submission_id : null}
                   onCancel={onCancelWorkflow}
                 />
               ) : activeWorkflowType === "fixed_payment" ? (
