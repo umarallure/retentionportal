@@ -6,16 +6,29 @@ import { useRouter } from "next/router";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Loader2, ArrowLeftIcon } from "lucide-react";
 
+import { LeadHeader } from "@/components/agent/assigned-lead-details/lead-header";
+import { PolicyCard } from "@/components/agent/assigned-lead-details/policy-card";
+import { DailyDealFlowTab } from "@/components/agent/assigned-lead-details/daily-deal-flow-tab";
+import { ContactNotesPanel } from "@/components/agent/assigned-lead-details/contact-notes-panel";
 import { VerificationPanel } from "@/components/agent/assigned-lead-details/verification-panel";
+import { PolicyStatusAlertDialog } from "@/components/agent/assigned-lead-details/policy-status-alert-dialog";
+import { NewSaleConfirmDialog } from "@/components/agent/assigned-lead-details/new-sale-confirm-dialog";
+import { useRetentionAgent } from "@/components/agent/assigned-lead-details/use-retention-agent";
+import type { RetentionType } from "@/components/agent/retention-workflows";
 import {
   buildVerificationFieldMap,
   getVerificationFieldList,
   type RetentionLeadForVerification,
 } from "@/lib/call-back-deals/build-verification-items";
+import {
+  normalizePhoneDigits,
+  buildDigitWildcardPattern,
+} from "@/lib/agent/assigned-lead-details.logic";
 
 type CallBackDealRow = {
   id: string;
@@ -37,6 +50,8 @@ type VerificationItemRow = {
   updated_at: string | null;
 };
 
+const NOOP = () => {};
+
 export default function AgentCallBackDealDetailsPage() {
   const router = useRouter();
   const { toast } = useToast();
@@ -44,6 +59,8 @@ export default function AgentCallBackDealDetailsPage() {
   React.useEffect(() => {
     toastRef.current = toast;
   }, [toast]);
+
+  const { retentionAgent } = useRetentionAgent();
 
   const idParam = typeof router.query.id === "string" ? router.query.id : "";
 
@@ -55,6 +72,48 @@ export default function AgentCallBackDealDetailsPage() {
 
   const [verificationItems, setVerificationItems] = React.useState<Array<Record<string, unknown>>>([]);
   const [verificationInputValues, setVerificationInputValues] = React.useState<Record<string, string>>({});
+  const [selectedPolicyKey, setSelectedPolicyKey] = React.useState<string | null>(null);
+
+  const [expandedWorkflowKey, setExpandedWorkflowKey] = React.useState<string | null>(null);
+  const [activeWorkflowType, setActiveWorkflowType] = React.useState<RetentionType | null>(null);
+  const [policyStatusAlertOpen, setPolicyStatusAlertOpen] = React.useState(false);
+  const [newSaleConfirmOpen, setNewSaleConfirmOpen] = React.useState(false);
+  const [pendingNewSalePolicyKey, setPendingNewSalePolicyKey] = React.useState<string | null>(null);
+
+  const [dailyFlowRows, setDailyFlowRows] = React.useState<Array<Record<string, unknown>>>([]);
+  const [dailyFlowLoading, setDailyFlowLoading] = React.useState(false);
+  const [dailyFlowError, setDailyFlowError] = React.useState<string | null>(null);
+  const [expandedDealFlowRows, setExpandedDealFlowRows] = React.useState<Set<string>>(new Set());
+
+  const handleToggleDealFlowRow = React.useCallback((rowId: string) => {
+    setExpandedDealFlowRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowId)) {
+        next.delete(rowId);
+      } else {
+        next.add(rowId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleToggleWorkflow = React.useCallback(
+    (policyKey: string, workflowType: RetentionType) => {
+      if (expandedWorkflowKey === policyKey && activeWorkflowType === workflowType) {
+        setExpandedWorkflowKey(null);
+        setActiveWorkflowType(null);
+      } else {
+        setExpandedWorkflowKey(policyKey);
+        setActiveWorkflowType(workflowType);
+      }
+    },
+    [expandedWorkflowKey, activeWorkflowType],
+  );
+
+  const handleCancelWorkflow = React.useCallback(() => {
+    setExpandedWorkflowKey(null);
+    setActiveWorkflowType(null);
+  }, []);
 
   const loadEverything = React.useCallback(async () => {
     if (!idParam) return;
@@ -62,7 +121,6 @@ export default function AgentCallBackDealDetailsPage() {
     setError(null);
 
     try {
-      // Auth token for lookup-lead.
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -97,6 +155,7 @@ export default function AgentCallBackDealDetailsPage() {
       setDeal(loadedDeal);
       setLead(json.lead);
       setMatchedBy(json.matchedBy);
+      setSelectedPolicyKey(loadedDeal.id);
 
       const fieldMap = buildVerificationFieldMap(json.lead, {
         leadVendor: loadedDeal.call_center,
@@ -104,7 +163,6 @@ export default function AgentCallBackDealDetailsPage() {
         phone: loadedDeal.phone_number,
       });
 
-      // Load existing verification items for this call back deal.
       const { data: existingItems, error: itemsErr } = await supabase
         .from("call_back_deal_verification_items")
         .select("id, call_back_deal_id, field_name, original_value, verified_value, is_verified, created_at, updated_at")
@@ -121,8 +179,6 @@ export default function AgentCallBackDealDetailsPage() {
 
       const fieldsToSeed = getVerificationFieldList();
 
-      // Upsert any missing rows so VerificationPanel has a stable set of items
-      // and also refresh original_value if the CRM data has a value but the DB doesn't.
       const inserts: Array<{
         call_back_deal_id: string;
         field_name: string;
@@ -166,7 +222,6 @@ export default function AgentCallBackDealDetailsPage() {
         }
       }
 
-      // Final fetch after seeding.
       const { data: finalItems, error: finalErr } = await supabase
         .from("call_back_deal_verification_items")
         .select("id, call_back_deal_id, field_name, original_value, verified_value, is_verified, created_at, updated_at")
@@ -179,7 +234,6 @@ export default function AgentCallBackDealDetailsPage() {
 
       const finalRows = (finalItems ?? []) as VerificationItemRow[];
 
-      // Preserve the canonical field ordering used in VerificationPanel.
       const orderIndex = new Map<string, number>(
         fieldsToSeed.map((name, idx) => [name, idx]),
       );
@@ -211,6 +265,117 @@ export default function AgentCallBackDealDetailsPage() {
   React.useEffect(() => {
     void loadEverything();
   }, [loadEverything]);
+
+  React.useEffect(() => {
+    const leadRec = (lead ?? null) as unknown as Record<string, unknown> | null;
+    const fallbackPhone =
+      (typeof deal?.phone_number === "string" && deal.phone_number.trim().length ? deal.phone_number : null) ??
+      (leadRec && typeof leadRec["phone_number"] === "string" ? (leadRec["phone_number"] as string) : null);
+    const fallbackName =
+      (leadRec && typeof leadRec["customer_full_name"] === "string"
+        ? (leadRec["customer_full_name"] as string)
+        : null) ??
+      (typeof deal?.name === "string" && deal.name.trim().length ? deal.name : null);
+
+    if (!fallbackPhone && !fallbackName) {
+      setDailyFlowRows([]);
+      setDailyFlowError(null);
+      setDailyFlowLoading(false);
+      return;
+    }
+
+    const insuredNameEscaped = (fallbackName ?? "").replace(/,/g, "").trim();
+    const phoneDigits = normalizePhoneDigits(fallbackPhone ?? "");
+    const last10 = phoneDigits.length >= 10 ? phoneDigits.slice(-10) : phoneDigits;
+    const phonePattern = last10 ? buildDigitWildcardPattern(last10) : null;
+
+    const hasAnyFilter =
+      (!!fallbackPhone && fallbackPhone.trim().length > 0) ||
+      (!!insuredNameEscaped && insuredNameEscaped.length > 0);
+    if (!hasAnyFilter) {
+      setDailyFlowRows([]);
+      setDailyFlowError(null);
+      setDailyFlowLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      setDailyFlowLoading(true);
+      setDailyFlowError(null);
+      try {
+        let q = supabase.from("daily_deal_flow").select("*");
+
+        const orParts: string[] = [];
+        if (insuredNameEscaped.length) {
+          orParts.push(`insured_name.ilike.%${insuredNameEscaped}%`);
+        }
+        if (phonePattern) {
+          orParts.push(`client_phone_number.ilike.${phonePattern}`);
+        }
+        if (orParts.length) {
+          q = q.or(orParts.join(","));
+        }
+        q = q.order("date", { ascending: false }).limit(250);
+
+        const { data, error: dfError } = await q;
+        if (dfError) throw dfError;
+
+        const exactRows = (data ?? []) as Array<Record<string, unknown>>;
+        if (exactRows.length > 0) {
+          if (!cancelled) setDailyFlowRows(exactRows);
+          return;
+        }
+
+        if (!last10) {
+          if (!cancelled) setDailyFlowRows([]);
+          return;
+        }
+
+        const pattern = buildDigitWildcardPattern(last10);
+        if (!pattern) {
+          if (!cancelled) setDailyFlowRows([]);
+          return;
+        }
+
+        let fq = supabase.from("daily_deal_flow").select("*").ilike("client_phone_number", pattern);
+        if (insuredNameEscaped.length) {
+          fq = fq.ilike("insured_name", `%${insuredNameEscaped}%`);
+        }
+        fq = fq.order("date", { ascending: false }).limit(250);
+
+        const { data: fuzzyData, error: fuzzyErr } = await fq;
+        if (fuzzyErr) throw fuzzyErr;
+        if (!cancelled) setDailyFlowRows((fuzzyData ?? []) as Array<Record<string, unknown>>);
+      } catch (e) {
+        if (!cancelled) {
+          const err = e as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown } | null;
+          const msg =
+            err && typeof err.message === "string"
+              ? [
+                  err.message,
+                  typeof err.code === "string" ? `Code: ${err.code}` : null,
+                  typeof err.details === "string" ? `Details: ${err.details}` : null,
+                  typeof err.hint === "string" ? `Hint: ${err.hint}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" • ")
+              : "Failed to load Daily Deal Flow.";
+          console.error("Daily Deal Flow query failed", { err });
+          setDailyFlowError(msg);
+          setDailyFlowRows([]);
+        }
+      } finally {
+        if (!cancelled) setDailyFlowLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [deal, lead]);
 
   const handleToggleVerification = React.useCallback(
     async (itemId: string, checked: boolean) => {
@@ -257,20 +422,76 @@ export default function AgentCallBackDealDetailsPage() {
     [],
   );
 
+  const leadRecord = React.useMemo(
+    () => (lead ?? null) as unknown as Record<string, unknown> | null,
+    [lead],
+  );
+
+  const policyViews = React.useMemo(() => {
+    if (!deal) return [];
+    const leadRec = leadRecord ?? {};
+    const raw: Record<string, unknown> = {
+      ...leadRec,
+      ghl_stage: deal.stage ?? null,
+      carrier: (leadRec["carrier"] as string | null | undefined) ?? null,
+      phone_number: deal.phone_number ?? null,
+      policy_type: (leadRec["product_type"] as string | null | undefined) ?? null,
+    };
+    return [
+      {
+        key: deal.id,
+        clientName: deal.name ?? (leadRec["customer_full_name"] as string | null | undefined) ?? "—",
+        callCenter: deal.call_center ?? (leadRec["lead_vendor"] as string | null | undefined) ?? null,
+        policyNumber: null,
+        agentName: (leadRec["agent"] as string | null | undefined) ?? null,
+        monthlyPremium: (leadRec["monthly_premium"] as number | string | null | undefined) ?? null,
+        coverage: (leadRec["coverage_amount"] as number | string | null | undefined) ?? null,
+        initialDraftDate: (leadRec["draft_date"] as string | null | undefined) ?? null,
+        statusNotes: null,
+        lastUpdated: (leadRec["updated_at"] as string | null | undefined) ?? null,
+        status: deal.stage ?? null,
+        raw,
+      },
+    ];
+  }, [deal, leadRecord]);
+
   const selectedPolicyView = React.useMemo(() => {
     if (!deal) return null;
+    const leadRec = leadRecord ?? {};
     return {
       callCenter: deal.call_center ?? null,
       policyNumber: null,
       clientName: deal.name ?? null,
-      carrier: (lead?.carrier as string | null | undefined) ?? null,
-      agentName: null,
+      carrier: (leadRec["carrier"] as string | null | undefined) ?? null,
+      agentName: (leadRec["agent"] as string | null | undefined) ?? null,
     };
-  }, [deal, lead]);
+  }, [deal, leadRecord]);
+
+  const personalSsnLast4 = React.useMemo(() => {
+    const ssn = (lead?.social_security as string | null | undefined) ?? "";
+    const digits = ssn.replace(/\D/g, "");
+    return digits.length >= 4 ? digits.slice(-4) : "-";
+  }, [lead]);
+
+  const personalDob = React.useMemo(() => {
+    const dob = (lead?.date_of_birth as string | null | undefined) ?? "";
+    return dob && dob.trim().length > 0 ? dob : "-";
+  }, [lead]);
+
+  const personalAddress1 = React.useMemo(() => {
+    const street = (lead?.street_address as string | null | undefined) ?? "";
+    return street && street.trim().length > 0 ? street : "-";
+  }, [lead]);
+
+  const name = deal?.name ?? "—";
+  const phone = deal?.phone_number ?? "-";
+  const carrier = ((lead?.carrier as string | null | undefined) ?? "-") || "-";
+  const productType = ((lead?.product_type as string | null | undefined) ?? "-") || "-";
+  const center = deal?.call_center ?? "-";
 
   if (!idParam) {
     return (
-      <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
+      <div className="w-full px-6 py-8 min-h-screen bg-muted/20">
         <Card>
           <CardContent className="p-6 text-sm text-muted-foreground">Missing id query parameter.</CardContent>
         </Card>
@@ -279,8 +500,48 @@ export default function AgentCallBackDealDetailsPage() {
   }
 
   return (
-    <div className="w-full px-8 py-10 min-h-screen bg-muted/20">
-      <div className="w-full space-y-4">
+    <div className="w-full px-6 py-8 min-h-screen bg-muted/20">
+      <PolicyStatusAlertDialog
+        open={policyStatusAlertOpen}
+        onOpenChange={setPolicyStatusAlertOpen}
+        selectedPolicyKey={selectedPolicyKey}
+        selectedPolicyView={selectedPolicyView}
+        lead={null}
+        selectedDeal={null}
+        retentionAgent={retentionAgent}
+        onSwitchToFixedPayment={() => {
+          setPolicyStatusAlertOpen(false);
+          if (selectedPolicyKey) {
+            setExpandedWorkflowKey(selectedPolicyKey);
+            setActiveWorkflowType("fixed_payment");
+          }
+        }}
+        onSwitchToNewSale={() => {
+          setPolicyStatusAlertOpen(false);
+          if (selectedPolicyKey) {
+            setExpandedWorkflowKey(selectedPolicyKey);
+            setActiveWorkflowType("new_sale");
+          }
+        }}
+      />
+
+      <NewSaleConfirmDialog
+        open={newSaleConfirmOpen}
+        onOpenChange={(open) => {
+          setNewSaleConfirmOpen(open);
+          if (!open) setPendingNewSalePolicyKey(null);
+        }}
+        onConfirm={() => {
+          const key = pendingNewSalePolicyKey;
+          setNewSaleConfirmOpen(false);
+          setPendingNewSalePolicyKey(null);
+          if (!key) return;
+          setExpandedWorkflowKey(key);
+          setActiveWorkflowType("new_sale");
+        }}
+      />
+
+      <div className="w-full space-y-3">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => router.push("/agent/call-back-deals")}>
             <ArrowLeftIcon className="h-4 w-4 mr-1" /> Back
@@ -291,47 +552,125 @@ export default function AgentCallBackDealDetailsPage() {
         </div>
 
         <Card>
-          <CardContent className="p-4 space-y-2">
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <h1 className="text-lg font-semibold">{deal?.name ?? "—"}</h1>
-              <span className="text-xs text-muted-foreground">#{deal?.submission_id}</span>
-              {deal?.stage ? (
-                <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">
-                  {deal.stage}
-                </span>
-              ) : null}
-            </div>
-            <div className="text-sm text-muted-foreground">
-              Phone: <span className="font-mono">{deal?.phone_number ?? "—"}</span> • Call center:{" "}
-              {deal?.call_center ?? "—"}
-            </div>
+          <LeadHeader
+            name={name}
+            phone={phone}
+            carrier={carrier}
+            productType={productType}
+            center={center}
+            dealId={null}
+            previousAssignedDealId={null}
+            nextAssignedDealId={null}
+            assignedDealsLoading={false}
+            selectedPolicyView={null}
+            onPreviousLead={NOOP}
+            onNextLead={NOOP}
+            onOpenDisposition={NOOP}
+          />
+          <CardContent className="flex flex-col gap-6">
+            {loading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading lead details...
+              </div>
+            ) : error ? (
+              <div className="text-sm text-red-600">{error}</div>
+            ) : !deal ? (
+              <div className="text-sm text-muted-foreground">Call back deal not found.</div>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+                <div className="min-w-0">
+                  <Tabs defaultValue="policies" className="w-full min-w-0">
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="policies">Policies</TabsTrigger>
+                      <TabsTrigger value="daily">Deal Notes</TabsTrigger>
+                      <TabsTrigger value="contact-notes">Contact Notes</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="policies" className="pt-2">
+                      <div className="rounded-md border p-4">
+                        <div className="text-sm font-medium">Policies</div>
+                        <Separator className="my-3" />
+
+                        {policyViews.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">No policies found.</div>
+                        ) : (
+                          <div className="space-y-3 max-w-2xl">
+                            {policyViews.map((p) => (
+                              <PolicyCard
+                                key={p.key}
+                                policy={p}
+                                isSelected={p.key === selectedPolicyKey}
+                                onSelect={() => setSelectedPolicyKey(p.key)}
+                                expandedWorkflowKey={expandedWorkflowKey}
+                                activeWorkflowType={activeWorkflowType}
+                                onToggleWorkflow={(workflowType) => handleToggleWorkflow(p.key, workflowType)}
+                                onOpenPolicyStatusAlert={() => setPolicyStatusAlertOpen(true)}
+                                onConfirmNewSale={(policyKey) => {
+                                  setPendingNewSalePolicyKey(policyKey);
+                                  setNewSaleConfirmOpen(true);
+                                }}
+                                lead={leadRecord}
+                                selectedDeal={{
+                                  monday_item_id: deal?.submission_id ?? null,
+                                  ghl_stage: deal?.stage ?? null,
+                                }}
+                                retentionAgent={retentionAgent}
+                                verificationSessionId={null}
+                                verificationItems={verificationItems}
+                                verificationInputValues={verificationInputValues}
+                                personalSsnLast4={personalSsnLast4}
+                                personalDob={personalDob}
+                                personalAddress1={personalAddress1}
+                                onCancelWorkflow={handleCancelWorkflow}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </TabsContent>
+
+                    <TabsContent value="daily" className="pt-2">
+                      <div className="rounded-md border p-4 min-w-0">
+                        <div className="text-sm font-medium">Daily Deal Flow & Notes</div>
+                        <Separator className="my-3" />
+                        <DailyDealFlowTab
+                          loading={dailyFlowLoading}
+                          error={dailyFlowError}
+                          rows={dailyFlowRows}
+                          expandedRows={expandedDealFlowRows}
+                          onToggleRow={handleToggleDealFlowRow}
+                        />
+                      </div>
+                    </TabsContent>
+
+                    <TabsContent value="contact-notes" className="pt-2">
+                      <div className="space-y-4">
+                        {deal?.submission_id ? (
+                          <ContactNotesPanel mondayItemId={String(deal.submission_id)} />
+                        ) : (
+                          <div className="text-sm text-muted-foreground">No submission ID available for contact notes.</div>
+                        )}
+                      </div>
+                    </TabsContent>
+                  </Tabs>
+                </div>
+
+                <div className="space-y-4">
+                  <VerificationPanel
+                    selectedPolicyView={selectedPolicyView}
+                    dealPhone={phone}
+                    loading={false}
+                    error={null}
+                    verificationItems={verificationItems}
+                    verificationInputValues={verificationInputValues}
+                    onToggleVerification={handleToggleVerification}
+                    onUpdateValue={handleUpdateValue}
+                  />
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
-
-        <Separator />
-
-        {loading ? (
-          <Card>
-            <CardContent className="p-6 flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading verification data...
-            </CardContent>
-          </Card>
-        ) : error ? (
-          <Card>
-            <CardContent className="p-6 text-sm text-destructive">{error}</CardContent>
-          </Card>
-        ) : (
-          <VerificationPanel
-            selectedPolicyView={selectedPolicyView}
-            dealPhone={deal?.phone_number ?? null}
-            loading={false}
-            error={null}
-            verificationItems={verificationItems}
-            verificationInputValues={verificationInputValues}
-            onToggleVerification={handleToggleVerification}
-            onUpdateValue={handleUpdateValue}
-          />
-        )}
       </div>
     </div>
   );
