@@ -62,6 +62,18 @@ type CallBackDealHandoffRow = {
   call_center: string | null;
 };
 
+const DAILY_DEAL_FLOW_LEAD_VENDOR = "Retention BPO";
+
+/** Calendar YYYY-MM-DD for "today" in US Eastern (America/New_York — EST or EDT). */
+function getCalendarDateYmdAmericaNewYork(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseData>) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -190,12 +202,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const verificationSessionId =
       typeof body.verificationSessionId === "string" ? body.verificationSessionId.trim() : "";
 
-    const dailyFlowDate = new Date().toISOString().slice(0, 10);
+    const dailyFlowDate = getCalendarDateYmdAmericaNewYork();
+
     const dailyDealFlowMinimal = {
       submission_id: handoffSubmissionId,
       date: dailyFlowDate,
       client_phone_number: phoneNumber.trim().length > 0 ? phoneNumber.trim() : null,
-      lead_vendor: callCenter.trim().length > 0 ? callCenter.trim() : null,
+      lead_vendor: DAILY_DEAL_FLOW_LEAD_VENDOR,
       insured_name: customerName.trim().length > 0 ? customerName.trim() : null,
       retention_agent: bufferAgentName.trim().length > 0 ? bufferAgentName.trim() : null,
       retention_agent_id: userData.user.id,
