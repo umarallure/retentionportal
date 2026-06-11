@@ -685,6 +685,16 @@ export default function AgentCallBackDealDetailsPage() {
           <div className="text-xs text-muted-foreground">
             Matched by: <span className="font-medium">{matchedBy}</span>
           </div>
+          <div className="flex-1" />
+          {previousCallBackDealId && (
+            <Button variant="outline" size="sm" onClick={goToPreviousCallBackDeal}>← Previous</Button>
+          )}
+          <div className="text-xs text-muted-foreground px-2">
+            {effectiveNavIds.length > 0 ? effectiveNavIds.indexOf(idParam) + 1 : 0} / {effectiveNavIds.length}
+          </div>
+          {nextCallBackDealId && (
+            <Button variant="outline" size="sm" onClick={goToNextCallBackDeal}>Next →</Button>
+          )}
         </div>
 
         <Card>
