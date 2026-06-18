@@ -243,6 +243,8 @@ export function PolicyCard({
     <div
       onClick={onSelect}
       onKeyDown={(e) => {
+        const target = e.target as HTMLElement;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           onSelect();
