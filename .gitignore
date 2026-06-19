@@ -117,3 +117,5 @@ SECURITY.md
 # Supabase migrations
 supabase/migrations/
 supabase/functions/
+
+.vscode/mcp.json

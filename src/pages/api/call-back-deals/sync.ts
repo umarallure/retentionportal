@@ -6,7 +6,7 @@ import { getSupabaseCrmAdmin } from "@/lib/supabase-crm";
 const TARGET_STAGES = [
   "Incomplete Transfer",
   "Application Withdrawn",
-  "Needs BPO Callback",
+  "Needs LA Callback",
   "Declined Underwriting",
 ] as const;
 
@@ -89,6 +89,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const crm = getSupabaseCrmAdmin();
 
+    // Support optional stage filter from request body
+    let body: { stage?: string } = {};
+    try {
+      body = JSON.parse(req.body ?? "{}");
+    } catch {
+      body = {};
+    }
+    const filterStage = typeof body.stage === "string" && body.stage.trim().length > 0 ? body.stage.trim() : null;
+
+    if (filterStage && !TARGET_STAGES.includes(filterStage as (typeof TARGET_STAGES)[number])) {
+      return res.status(400).json({ ok: false, error: `Invalid stage "${filterStage}". Must be one of: ${TARGET_STAGES.join(", ")}` });
+    }
+
+    const stagesToSync = filterStage ? [filterStage] : [...TARGET_STAGES];
+
     const PAGE_SIZE = 1000;
     const allLeads: CrmLeadRow[] = [];
     let offset = 0;
@@ -100,7 +115,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         .select(
           "id, first_name, last_name, phone, submission_id, stage, stage_id, call_center_id, lead_source",
         )
-        .in("stage", [...TARGET_STAGES])
+        .in("stage", stagesToSync)
         .range(offset, offset + PAGE_SIZE - 1);
 
       if (error) {
@@ -240,7 +255,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       fetched: allLeads.length,
       upserted,
       skipped,
-      stages: [...TARGET_STAGES],
+      stages: stagesToSync,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unexpected sync error";

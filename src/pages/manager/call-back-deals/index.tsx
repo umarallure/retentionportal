@@ -44,7 +44,7 @@ type ProfileRow = {
 const STAGE_OPTIONS = [
   "Incomplete Transfer",
   "Application Withdrawn",
-  "Needs BPO Callback",
+  "Needs LA Callback",
   "Declined Underwriting",
   "Internal-Leads-Never-Called",
 ];
@@ -92,6 +92,17 @@ export default function ManagerCallBackDealsPage() {
   const [unassignOpen, setUnassignOpen] = useState(false);
   const [unassigning, setUnassigning] = useState(false);
   const [activeUnassign, setActiveUnassign] = useState<CallBackDealRow | null>(null);
+
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [syncStageFilter, setSyncStageFilter] = useState<string>("");
+  const [syncProgress, setSyncProgress] = useState<{
+    stageIndex: number;
+    totalStages: number;
+    currentStage: string;
+    fetched: number;
+    upserted: number;
+    skipped: number;
+  } | null>(null);
 
   const pageCount = useMemo(() => {
     if (!totalRows) return 1;
@@ -313,34 +324,72 @@ export default function ManagerCallBackDealsPage() {
     void loadRows();
   }, [loadRows]);
 
-  const handleSync = async () => {
+  const handleSync = async (stage?: string) => {
     setSyncing(true);
+    setSyncModalOpen(false);
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      toast({ title: "Sync failed", description: "Not authenticated", variant: "destructive" });
+      setSyncing(false);
+      return;
+    }
+
+    const stages = stage ? [stage] : [...STAGE_OPTIONS];
+    let totalFetched = 0;
+    let totalUpserted = 0;
+    let totalSkipped = 0;
+
     try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
-      if (!token) throw new Error("Not authenticated");
+      for (let i = 0; i < stages.length; i++) {
+        const currentStage = stages[i]!;
+        setSyncProgress({
+          stageIndex: i + 1,
+          totalStages: stages.length,
+          currentStage,
+          fetched: totalFetched,
+          upserted: totalUpserted,
+          skipped: totalSkipped,
+        });
 
-      const resp = await fetch("/api/call-back-deals/sync", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      const json = (await resp.json().catch(() => null)) as
-        | { ok: true; fetched: number; upserted: number; skipped: number }
-        | { ok: false; error: string }
-        | null;
+        const resp = await fetch("/api/call-back-deals/sync", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ stage: currentStage }),
+        });
+        const json = (await resp.json().catch(() => null)) as
+          | { ok: true; fetched: number; upserted: number; skipped: number }
+          | { ok: false; error: string }
+          | null;
 
-      if (!resp.ok || !json || !json.ok) {
-        throw new Error(json && "error" in json ? json.error : `Sync failed (status ${resp.status})`);
+        if (!resp.ok || !json || !json.ok) {
+          throw new Error(json && "error" in json ? json.error : `Sync failed for "${currentStage}" (status ${resp.status})`);
+        }
+
+        totalFetched += json.fetched;
+        totalUpserted += json.upserted;
+        totalSkipped += json.skipped;
+
+        setSyncProgress({
+          stageIndex: i + 1,
+          totalStages: stages.length,
+          currentStage,
+          fetched: totalFetched,
+          upserted: totalUpserted,
+          skipped: totalSkipped,
+        });
       }
 
+      setSyncProgress(null);
       toast({
         title: "Sync complete",
-        description: `Fetched ${json.fetched} CRM leads • Upserted ${json.upserted} • Skipped ${json.skipped}`,
+        description: `Fetched ${totalFetched} • Upserted ${totalUpserted} • Skipped ${totalSkipped}`,
       });
 
       setPage(1);
@@ -348,6 +397,7 @@ export default function ManagerCallBackDealsPage() {
       await loadStats();
     } catch (error) {
       console.error("[manager-call-back-deals] sync error", error);
+      setSyncProgress(null);
       toast({
         title: "Sync failed",
         description: error instanceof Error ? error.message : "Unknown error",
@@ -553,7 +603,7 @@ export default function ManagerCallBackDealsPage() {
               <Button
                 variant="default"
                 className="lg:ml-auto"
-                onClick={handleSync}
+                onClick={() => setSyncModalOpen(true)}
                 disabled={syncing || loading}
               >
                 {syncing ? (
@@ -832,6 +882,93 @@ export default function ManagerCallBackDealsPage() {
           void loadStats();
         }}
       />
+
+      <Dialog open={syncModalOpen} onOpenChange={setSyncModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Sync Call Back Deals</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Choose a specific stage to sync, or sync all stages.
+            </p>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Stage (optional)</label>
+              <Select value={syncStageFilter} onValueChange={setSyncStageFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="All stages" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All stages</SelectItem>
+                  {STAGE_OPTIONS.map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setSyncModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              onClick={() => void handleSync(syncStageFilter === "all" || !syncStageFilter ? undefined : syncStageFilter)}
+            >
+              <RefreshCwIcon className="mr-2 h-4 w-4" />
+              {syncStageFilter && syncStageFilter !== "all" ? `Sync "${syncStageFilter}"` : "Sync All"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sync progress dialog */}
+      <Dialog open={syncProgress !== null}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Syncing Call Back Deals</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {syncProgress && (
+              <>
+                <div className="flex items-center justify-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Progress</span>
+                    <span className="font-medium">{syncProgress.stageIndex} / {syncProgress.totalStages}</span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-2">
+                    <div
+                      className="bg-primary h-2 rounded-full transition-all"
+                      style={{ width: `${(syncProgress.stageIndex / syncProgress.totalStages) * 100}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Current stage</span>
+                    <span className="font-medium">{syncProgress.currentStage}</span>
+                  </div>
+                  <div className="border-t pt-2 mt-2 space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Fetched</span>
+                      <span className="font-medium">{syncProgress.fetched.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Upserted</span>
+                      <span className="font-medium">{syncProgress.upserted.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Skipped</span>
+                      <span className="font-medium">{syncProgress.skipped.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
