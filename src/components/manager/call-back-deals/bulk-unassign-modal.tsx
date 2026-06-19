@@ -12,7 +12,7 @@ import { Loader2, UserMinus } from "lucide-react";
 const STAGE_OPTIONS = [
   "Incomplete Transfer",
   "Application Withdrawn",
-  "Needs BPO Callback",
+  "Needs LA Callback",
   "Declined Underwriting",
   "Internal-Leads-Never-Called",
 ];

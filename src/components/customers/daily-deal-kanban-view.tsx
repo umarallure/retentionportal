@@ -14,7 +14,7 @@ import { DealsKanbanCard, type DealsKanbanRow } from "@/components/customers/dea
 // Two groups we want to show
 const GROUPS = [
   { id: "incomplete_transfer", title: "Incomplete Transfer", color: "#D97706", status: "Incomplete Transfer" },
-  { id: "needs_bpo_callback", title: "Needs BPO Callback", color: "#0EA5A4", status: "Needs BPO Callback" },
+  { id: "needs_la_callback", title: "Needs LA Callback", color: "#0EA5A4", status: "Needs LA Callback" },
 ];
 
 type GroupState = {
