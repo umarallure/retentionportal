@@ -59,6 +59,8 @@ export default function AgentFailedPaymentFixesPage() {
   const [retentionStatusOptions, setRetentionStatusOptions] = useState<string[]>([]);
   const [carrierStatusFilter, setCarrierStatusFilter] = useState<string[]>([]);
   const [carrierStatusOptions, setCarrierStatusOptions] = useState<string[]>([]);
+  const [carrierFilter, setCarrierFilter] = useState<string[]>([]);
+  const [carrierOptions, setCarrierOptions] = useState<string[]>([]);
   const [page, setPage] = useState(1);
 
   const [statsLoading, setStatsLoading] = useState(false);
@@ -132,6 +134,10 @@ export default function AgentFailedPaymentFixesPage() {
         listQuery = listQuery.in("carrier_status", carrierStatusFilter);
       }
 
+      if (carrierFilter.length > 0) {
+        listQuery = listQuery.in("carrier", carrierFilter);
+      }
+
       if (statusFilteredPolicyIds !== null) {
         listQuery = listQuery.in("policy_number", statusFilteredPolicyIds);
       }
@@ -150,13 +156,23 @@ export default function AgentFailedPaymentFixesPage() {
       setTotalRows(count ?? null);
 
       if (carrierStatusOptions.length === 0) {
-        const { data: carrierRows } = await supabase
+        const { data: csRows } = await supabase
           .from("failed_payment_fixes")
           .select("carrier_status")
           .eq("is_active", true)
           .not("carrier_status", "is", null);
-        const unique = Array.from(new Set((carrierRows ?? []).map((r) => r.carrier_status as string).filter(Boolean))).sort();
-        setCarrierStatusOptions(unique);
+        const uniqueCs = Array.from(new Set((csRows ?? []).map((r) => r.carrier_status as string).filter(Boolean))).sort();
+        setCarrierStatusOptions(uniqueCs);
+      }
+
+      if (carrierOptions.length === 0) {
+        const { data: cRows } = await supabase
+          .from("failed_payment_fixes")
+          .select("carrier")
+          .eq("is_active", true)
+          .not("carrier", "is", null);
+        const uniqueC = Array.from(new Set((cRows ?? []).map((r) => r.carrier as string).filter(Boolean))).sort();
+        setCarrierOptions(uniqueC);
       }
 
       const policyNumbers = deals.map((d) => d.policy_number).filter(Boolean);
@@ -181,7 +197,14 @@ export default function AgentFailedPaymentFixesPage() {
         }
 
         setRetentionData(retentionMap);
-        setRetentionStatusOptions(Array.from(uniqueStatuses).sort());
+        if (retentionStatusOptions.length === 0) {
+          const { data: allRetentionRows } = await supabase
+            .from("retention_deal_flow")
+            .select("status")
+            .not("status", "is", null);
+          const allStatuses = Array.from(new Set((allRetentionRows ?? []).map((r) => (r.status as string).trim()).filter(Boolean))).sort();
+          setRetentionStatusOptions(allStatuses);
+        }
       }
 
       setRows(deals);
@@ -192,7 +215,7 @@ export default function AgentFailedPaymentFixesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter, carrierStatusFilter, search, retentionStatusFilter]);
+  }, [page, statusFilter, carrierStatusFilter, carrierFilter, search, retentionStatusFilter]);
 
   useEffect(() => {
     void loadDeals();
@@ -312,6 +335,18 @@ export default function AgentFailedPaymentFixesPage() {
                 </SelectContent>
               </Select>
               <MultiSelect
+                options={carrierOptions}
+                selected={carrierFilter}
+                onChange={(selected) => {
+                  setCarrierFilter(selected);
+                  setPage(1);
+                }}
+                placeholder="Carrier"
+                className="w-full sm:w-[150px]"
+                showAllOption
+                allOptionLabel="All Carriers"
+              />
+              <MultiSelect
                 options={carrierStatusOptions}
                 selected={carrierStatusFilter}
                 onChange={(selected) => {
@@ -319,7 +354,7 @@ export default function AgentFailedPaymentFixesPage() {
                   setPage(1);
                 }}
                 placeholder="Carrier Status"
-                className="w-full sm:w-[200px]"
+                className="w-full sm:w-[180px]"
                 showAllOption
                 allOptionLabel="All Carrier Statuses"
               />
