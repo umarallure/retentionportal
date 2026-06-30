@@ -117,6 +117,15 @@ export default function AgentFailedPaymentFixesPage() {
         statusFilteredPolicyIds = filtered;
       }
 
+      // Always exclude leads that have been unassigned in retention_deal_flow
+      const { data: unassignedRows } = await supabase
+        .from("retention_deal_flow")
+        .select("submission_id")
+        .eq("status", "unassigned");
+      const excludePolicyNumbers = new Set(
+        (unassignedRows ?? []).map((r) => r.submission_id).filter((v): v is string => typeof v === "string" && v.length > 0)
+      );
+
       let listQuery = supabase
         .from("failed_payment_fixes")
         .select(
@@ -144,6 +153,11 @@ export default function AgentFailedPaymentFixesPage() {
 
       if (statusFilteredPolicyIds !== null) {
         listQuery = listQuery.in("policy_number", statusFilteredPolicyIds);
+      }
+
+      if (excludePolicyNumbers.size > 0) {
+        const quoted = Array.from(excludePolicyNumbers).map((v) => `"${v.replace(/"/g, '""')}"`);
+        listQuery = listQuery.filter("policy_number", "not.in", `(${quoted.join(",")})`);
       }
 
       const trimmed = search.trim();
